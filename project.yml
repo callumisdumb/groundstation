@@ -1,0 +1,31 @@
+name: MavicGroundStation
+options:
+  bundleIdPrefix: com.example.mavic
+  deploymentTarget:
+    macOS: "13.0"
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  MacGroundStation:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacGroundStation
+      - path: Shared/Protocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.mavic.groundstation
+  iOSFlightBridge:
+    type: application
+    platform: iOS
+    sources:
+      - path: iOSFlightBridge
+      - path: Shared/Protocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.mavic.flightbridge
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Connect to your Mac ground station over the local network."

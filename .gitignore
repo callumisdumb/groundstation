@@ -1,0 +1,14 @@
+# Generated project; XcodeGen source of truth is project.yml
+*.xcodeproj/
+*.xcworkspace/
+Pods/
+DerivedData/
+.build/
+build/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+.env
+*.mobileprovision
+*.p12
+*.key
