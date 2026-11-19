@@ -16,6 +16,7 @@ struct CockpitWorkspace: View {
     @State private var inspector: ControlTab = .vision
     @State private var manualTrackingLabel = "Vehicle / object"
     @State private var gimbalPitch = -30.0
+    @State private var cameraFocusMode = false
     @State private var confirmAction: GroundStationCommand.Action?
 
     private var telemetry: GroundStationMessage.Payload? { client.latestStatus?.payload }
@@ -36,8 +37,10 @@ struct CockpitWorkspace: View {
                     HStack(alignment: .top, spacing: 12) {
                         fpv
                             .frame(minWidth: 340, maxWidth: .infinity)
-                        mapPanel
-                            .frame(width: 350)
+                        if !cameraFocusMode {
+                            mapPanel
+                                .frame(width: 350)
+                        }
                     }
                     liveInstruments
                     GSPanel("Operations overview", icon: "info.circle") {
@@ -94,14 +97,14 @@ struct CockpitWorkspace: View {
                 }
                 ZStack {
                     H264LiveVideoView(display: video.display)
-                        .frame(height: 360)
+                        .frame(height: cameraFocusMode ? 480 : 360)
                         .background(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     if video.framesDisplayed > 0 {
                         VisionVideoOverlay(vision: video.vision,
                                            client: client,
                                            manualLabel: manualTrackingLabel)
-                            .frame(height: 360)
+                            .frame(height: cameraFocusMode ? 480 : 360)
                     }
                     if video.framesDisplayed == 0 {
                         VStack(spacing: 9) {

@@ -5,7 +5,9 @@ enum GSPalette {
     static let side = Color(red: 0.075, green: 0.091, blue: 0.116)
     static let panel = Color(red: 0.092, green: 0.112, blue: 0.140)
     static let raised = Color(red: 0.125, green: 0.150, blue: 0.181)
-    static let border = Color.white.opacity(0.085)
+    static let border = Color.white.opacity(0.10)
+    static let highlight = Color(red: 0.18, green: 0.65, blue: 0.77)
+    static let slate = Color(red: 0.16, green: 0.20, blue: 0.25)
     static let cyan = Color(red: 0.24, green: 0.82, blue: 0.94)
     static let green = Color(red: 0.29, green: 0.85, blue: 0.60)
     static let amber = Color(red: 1.0, green: 0.70, blue: 0.32)
@@ -31,19 +33,37 @@ struct GSPanel<Content: View>: View {
                     if let icon {
                         Image(systemName: icon).foregroundStyle(GSPalette.cyan)
                     }
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold))
+                    Text(title.uppercased())
+                        .tracking(0.8)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.85))
                     Spacer(minLength: 0)
                 }
             }
             content
         }
-        .padding(14)
-        .background(GSPalette.panel)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(GSPalette.border, lineWidth: 1))
+        .padding(15)
+        .background {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .fill(LinearGradient(colors: [
+                    Color(red: 0.12, green: 0.15, blue: 0.19),
+                    GSPalette.panel
+                ], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.13)
+                }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [
+                    .white.opacity(0.13),
+                    .white.opacity(0.025)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
     }
 }
 
