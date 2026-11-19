@@ -113,3 +113,56 @@ H.264 stream instead of waiting for a JPEG snapshot every two seconds.
 
 > If the video panel stays black, don't fly or guess at video latency; check
 > the hardware aircraft link and follow the video diagnostics.
+
+
+## FlightHub-inspired Virtual Cockpit redesign
+
+GroundStation uses an **original dark operations design** with the core interaction
+patterns studied from the current [DJI FlightHub 2 Virtual Cockpit manual](https://fh.dji.com/user-manual/en/real-time-project-information/virtual-cockpit.html).
+It is **not** DJI FlightHub software and the original Mavic Pro is **not**
+FlightHub 2 Virtual Cockpit compatible.
+
+The Mac app now includes three workspaces:
+1. **Virtual Cockpit** — large continuous H.264 camera view, live MapKit
+   aircraft/home/route overlays, flight instruments and Mac-only camera/gimbal controls.
+2. **Mission Planning** — locally saved flight-route drafts with manual waypoint
+   editing, route overlays and GeoJSON export. This is **offline planning only**;
+   uploading or executing waypoint missions is not implemented.
+3. **Activity & Logs** — live operator and connection events, with unique IDs.
+
+### Keyboard piloting preview
+
+In Virtual Cockpit, enable **Capture keyboard in cockpit**, then use:
+
+| Input | Proposed movement |
+| --- | --- |
+| W / S | Forward / back |
+| A / D | Left / right |
+| Q / E | Yaw left / right |
+| C / Z | Ascend / descend |
+| SPACE (held) | Additional held-to-move interlock |
+| Esc, focus loss, key release | Release keyboard movement |
+
+The new keyboard monitor displays key-state feedback even while flight actuation
+is **disabled**. Unlike DJI FlightHub 2, we require holding SPACE as a dead-man
+interlock for this custom application's eventual control system. Space is *not*
+a takeoff, land or emergency-stop button.
+
+**Current safety lock:** Flight commands are disabled via the intentionally
+unset \`GROUNDSTATION_FLIGHT_TESTED\` compile condition. They must not be
+unlocked on the strength of working UI or camera alone. Requirements include
+secure authenticated transport, end-to-end latency tests, DJI simulator testing,
+flight-controller fallback and tests supervised with the original physical RC.
+The continuous video feed also needs measured control-to-photon latency.
+Please see [Virtual Cockpit Guide](Documentation/VirtualCockpit.md).
+
+### Upgrade (existing branch, no branch switch)
+
+\`\`\`bash
+git pull --ff-only origin feature/dji-v4-readonly
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+\`\`\`
+
+Build both \`MacGroundStation\` and \`iOSFlightBridge\` on the Mac and iPhone.
