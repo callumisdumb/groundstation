@@ -1,5 +1,8 @@
 platform :ios, '16.0'
 
+# XcodeGen creates this project locally; its generated scheme contains the bridge target.
+project 'MavicGroundStation.xcodeproj'
+
 # Legacy DJI SDK v4 required by the original Mavic Pro.
 # DJIWidget is DJI's video decoder; installation on current Xcode still
 # requires compatibility checks with the real iPhone 15.
