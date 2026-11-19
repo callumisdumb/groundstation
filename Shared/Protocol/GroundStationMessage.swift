@@ -38,6 +38,11 @@ struct GroundStationMessage: Codable {
         var homeLongitude: Double? = nil
         var imuPreheating: Bool? = nil
         var flightTimeSeconds: Int? = nil
+        // DJI native ActiveTrack status; unavailable in baseline builds.
+        var activeTrackState: String? = nil
+        var activeTrackTargetRect: TrackingRectangle? = nil
+        var activeTrackMovementEnabled: Bool? = nil
+        var activeTrackError: String? = nil
         var imageJPEGBase64: String? = nil
         var commandID: String? = nil
         var commandAccepted: Bool? = nil
@@ -54,6 +59,7 @@ struct GroundStationCommand: Codable {
         case armFlight, disarmFlight, takeoff, land, returnHome
         case motorsOn, motorsOff
         case enableSticks, disableSticks, sticks
+        case activeTrackPrepare, activeTrackConfirm, activeTrackStop
     }
     var version: Int = 1
     var id: String = UUID().uuidString
@@ -65,4 +71,21 @@ struct GroundStationCommand: Codable {
     var roll: Double? = nil
     var yaw: Double? = nil
     var vertical: Double? = nil
+    /// DJI's video stream coordinate space: top-left origin; values 0–1.
+    var trackingRect: TrackingRectangle? = nil
+}
+
+/// A subject rectangle in DJI's normalised video space (origin top-left).
+struct TrackingRectangle: Codable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    var isValid: Bool {
+        [x, y, width, height].allSatisfy { $0.isFinite } &&
+        x >= 0 && y >= 0 && width > 0 && height > 0 &&
+        x + width <= 1.0001 && y + height <= 1.0001 &&
+        width >= 0.025 && height >= 0.025
+    }
 }
