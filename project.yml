@@ -23,10 +23,13 @@ targets:
     platform: iOS
     sources:
       - path: iOSFlightBridge
+        excludes:
+          - Info.plist
+          - InfoPlist-Additions.md
       - path: Shared/Protocol
     configFiles:
-      Debug: Configurations/Bridge.xcconfig
-      Release: Configurations/Bridge.xcconfig
+      Debug: Configurations/BridgeDebug.xcconfig
+      Release: Configurations/BridgeRelease.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.benmacaulay.mavic.flightbridge
