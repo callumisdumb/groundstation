@@ -13,6 +13,7 @@ final class BridgeClient: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var virtualSticksEnabled = false
     @Published private(set) var flightKeyVerified = false
+    @Published private(set) var liveFlightAcknowledged = false
     @Published var flightKeyInput = FlightKeyStore.load() ?? ""
     @Published private(set) var lastControlResult = "No flight commands sent"
     @Published private(set) var latestStatus: GroundStationMessage?
@@ -35,6 +36,29 @@ final class BridgeClient: ObservableObject {
         latestStatus?.payload.djiSimulatorActive == true
     }
 
+    var liveFlightAuthorized: Bool {
+        !djiSimulatorActive && liveFlightAcknowledged &&
+        latestStatus?.payload.liveFlightAuthorized == true
+    }
+
+    /// Mac-side readiness is advisory: the iPhone rechecks all preflight
+    /// constraints against its own DJI SDK state before executing commands.
+    var livePreflightReady: Bool {
+        guard connected, flightKeyVerified, !djiSimulatorActive,
+              latestStatus?.payload.aircraftConnected == true,
+              latestStatus?.payload.simulated == false,
+              latestStatus?.payload.controllerConnected == true,
+              let p = latestStatus?.payload,
+              let timestamp = lastTelemetryAt,
+              Date().timeIntervalSince(timestamp) < 1.5 else { return false }
+        return p.aircraftModel?.lowercased().contains("mavic pro") == true &&
+            p.isFlying == false && p.motorsOn == false &&
+            (p.batteryPercent ?? 0) >= 40 &&
+            (p.satelliteCount ?? 0) >= 10 &&
+            p.homeLocationSet == true && p.imuPreheating == false &&
+            p.latitude != nil && p.longitude != nil
+    }
+
     var flightReady: Bool {
         guard connected, flightKeyVerified,
               latestStatus?.payload.aircraftConnected == true,
@@ -44,18 +68,15 @@ final class BridgeClient: ObservableObject {
               !pairingCode.isEmpty else { return false }
 
         if djiSimulatorActive { return true }
-
-        // Real aircraft movement is commissioned separately from DJI simulator
-        // control, after testing. The build flag is intentionally absent from
-        // releases until full hardware/network validation is complete.
-        #if GROUNDSTATION_FLIGHT_TESTED
-        return (latestStatus?.payload.batteryPercent ?? 0) >= 30 &&
-            (latestStatus?.payload.satelliteCount ?? 0) >= 8 &&
-            latestStatus?.payload.homeLocationSet == true &&
-            latestStatus?.payload.imuPreheating == false
-        #else
-        return false
-        #endif
+        guard liveFlightAuthorized, let p = latestStatus?.payload else { return false }
+        // Authorization is preflight-only; once airborne, use the in-flight
+        // thresholds and always keep the landing/RTH controls accessible.
+        if p.isFlying == true {
+            return (p.batteryPercent ?? 0) >= 25 &&
+                (p.satelliteCount ?? 0) >= 8 &&
+                p.homeLocationSet == true && p.imuPreheating == false
+        }
+        return livePreflightReady
     }
 
     func saveFlightKey() {
@@ -118,6 +139,7 @@ final class BridgeClient: ObservableObject {
         connected = false
         virtualSticksEnabled = false
         flightKeyVerified = false
+        liveFlightAcknowledged = false
         flightArmExpires = .distantPast
         pendingActions.removeAll()
         latestStatus = nil
@@ -166,6 +188,10 @@ final class BridgeClient: ObservableObject {
                 case .aircraftStatus:
                     latestStatus = message
                     lastTelemetryAt = Date()
+                    if message.payload.djiSimulatorActive == true ||
+                       message.payload.liveFlightAuthorized == false {
+                        liveFlightAcknowledged = false
+                    }
                     if let engaged = message.payload.virtualSticksEngaged {
                         virtualSticksEnabled = engaged
                     }
@@ -185,6 +211,12 @@ final class BridgeClient: ObservableObject {
                        let action = pendingActions.removeValue(forKey: id) {
                         if action == .verifyFlightKey {
                             flightKeyVerified = message.payload.commandAccepted == true
+                        }
+                        if action == .authorizeLiveFlight {
+                            liveFlightAcknowledged = message.payload.commandAccepted == true
+                        }
+                        if action == .revokeLiveFlight || action == .stopDJISimulator {
+                            liveFlightAcknowledged = false
                         }
                         if action == .enableSticks {
                             virtualSticksEnabled = message.payload.commandAccepted == true
@@ -228,6 +260,13 @@ final class BridgeClient: ObservableObject {
                                            action: .activeTrackPrepare,
                                            trackingRect: rect)
         sendCommand(command)
+    }
+
+    func revokeLiveFlight() {
+        releaseVirtualSticks()
+        flightArmExpires = .distantPast
+        liveFlightAcknowledged = false
+        if connected && flightKeyVerified { send(.revokeLiveFlight) }
     }
 
     func send(_ action: GroundStationCommand.Action, value: Double? = nil) {
