@@ -89,12 +89,27 @@ but gimbal/camera/mission/flight operation will be managed from the Mac.
 On `feature/dji-v4-readonly`, the UI contains aircraft diagnostics, map, DJI camera
 commands, gimbal pitch controls, and a prototype for flight actions / held virtual sticks.
 **Flight actions and motors are intentionally DISABLED** by default because an
-unencrypted LAN + sampled JPEG video are not suitable for live flight control. They
+unencrypted LAN + unvalidated H.264 network video are not suitable for live flight control. They
 must not be enabled simply by changing a build flag without a secure transport and
 controlled hardware/simulator testing. A checked, production pilot must have the physical
 controller and direct visual line of sight.
 
-Camera video is an experimental DJIWidget decoder on iPhone, relaying a JPEG snapshot
-every ~2 seconds to Mac; this is not an FPV piloting feed. DJIWidget may require legacy
+Camera video now has a **continuous H.264** path: the iPhone forwards DJI's compressed
+primary camera feed over a separate paired TCP port **8766**; the Mac parses and
+displays H.264 using Apple's AVSampleBufferDisplayLayer. The telemetry/command
+port **8765** remains separate. This is a development live preview, **not** a
+flight-certified low-latency FPV system. DJIWidget may still require legacy
 Xcode compatibility work. See
 [Mac-only controls and testing](Documentation/MacControlTesting.md).
+
+
+## Live H.264 camera preview (experimental)
+
+See [Live Video Setup and Troubleshooting](Documentation/LiveVideo.md).
+Rebuild **both** Xcode targets after pulling this branch. When the Mac connects
+to the iPhone on port 8765, it also connects to the continuous DJI video relay
+on port 8766 using the six-digit code. The Mac decodes the incoming compressed
+H.264 stream instead of waiting for a JPEG snapshot every two seconds.
+
+> If the video panel stays black, don't fly or guess at video latency; check
+> the hardware aircraft link and follow the video diagnostics.
