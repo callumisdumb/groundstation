@@ -4,6 +4,7 @@ import Combine
 import CoreMedia
 import Network
 import SwiftUI
+import VideoToolbox
 
 /// Separate H.264 transport and decoder. Video is NOT multiplexed with
 /// flight telemetry or control messages, preventing encoded video backpressure
@@ -20,6 +21,7 @@ final class H264LiveVideoClient: ObservableObject {
     @Published private(set) var lastVideoAt: Date?
 
     let display = H264LiveDisplay()
+    let vision = VisionTrackingEngine()
 
     private var connection: NWConnection?
     private var transportBuffer = Data()
@@ -29,6 +31,9 @@ final class H264LiveVideoClient: ObservableObject {
     private let maxChunkSize = 256 * 1024
 
     init() {
+        display.onDecodedFrame = { [weak self] pixelBuffer in
+            self?.vision.receive(pixelBuffer)
+        }
         parser.onAccessUnit = { [weak self] nalUnits, sps, pps in
             Task { @MainActor in
                 self?.present(nalUnits, sps: sps, pps: pps)
@@ -259,6 +264,9 @@ final class H264AccessUnitParser {
 @MainActor
 final class H264LiveDisplay {
     let layer = AVSampleBufferDisplayLayer()
+    var onDecodedFrame: ((CVPixelBuffer) -> Void)?
+
+    private var analysisDecoder: VTDecompressionSession?
 
     private var currentSPS: Data?
     private var currentPPS: Data?
@@ -270,6 +278,10 @@ final class H264LiveDisplay {
     }
 
     func reset() {
+        if let analysisDecoder {
+            VTDecompressionSessionInvalidate(analysisDecoder)
+        }
+        analysisDecoder = nil
         layer.flushAndRemoveImage()
         currentSPS = nil
         currentPPS = nil
@@ -343,6 +355,17 @@ final class H264LiveDisplay {
         if layer.status == .failed { layer.flushAndRemoveImage() }
         guard layer.isReadyForMoreMediaData else { return false }
         layer.enqueue(sample)
+        if let analysisDecoder, onDecodedFrame != nil {
+            // Second VideoToolbox decoding path exposes uncompressed pixels to
+            // Apple Vision without ever blocking or interfering with the
+            // separate DJI camera/telemetry transport.
+            _ = VTDecompressionSessionDecodeFrame(
+                analysisDecoder,
+                sampleBuffer: sample,
+                flags: [],
+                frameRefcon: nil,
+                infoFlagsOut: nil)
+        }
         return true
     }
 
@@ -365,6 +388,35 @@ final class H264LiveDisplay {
         }
         guard result == noErr, let description else { return false }
         layer.flushAndRemoveImage()
+        if let analysisDecoder {
+            VTDecompressionSessionInvalidate(analysisDecoder)
+        }
+        analysisDecoder = nil
+        var callback = VTDecompressionOutputCallbackRecord()
+        callback.decompressionOutputRefCon = Unmanaged.passUnretained(self).toOpaque()
+        callback.decompressionOutputCallback = { refcon, _, status, _, imageBuffer, _, _ in
+            guard status == noErr, let refcon, let imageBuffer else { return }
+            let owner = Unmanaged<H264LiveDisplay>.fromOpaque(refcon).takeUnretainedValue()
+            Task { @MainActor in
+                owner.onDecodedFrame?(imageBuffer)
+            }
+        }
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        let resultCode = VTDecompressionSessionCreate(
+            allocator: kCFAllocatorDefault,
+            formatDescription: description,
+            decoderSpecification: nil,
+            imageBufferAttributes: attributes as CFDictionary,
+            outputCallback: &callback,
+            decompressionSessionOut: &analysisDecoder)
+        if resultCode != noErr {
+            analysisDecoder = nil
+            NSLog("Vision analysis decoder unavailable: %d", resultCode)
+        }
         format = description
         currentSPS = sps
         currentPPS = pps
