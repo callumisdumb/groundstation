@@ -104,6 +104,7 @@ extension GroundStationCommand.Action {
     var requiresEncryptedFlightLink: Bool {
         switch self {
         case .startDJISimulator, .stopDJISimulator, .verifyFlightKey,
+             .authorizeLiveFlight, .revokeLiveFlight,
              .armFlight, .disarmFlight, .takeoff, .land, .returnHome,
              .motorsOn, .motorsOff, .enableSticks, .disableSticks, .sticks,
              .activeTrackPrepare, .activeTrackConfirm, .activeTrackStop:

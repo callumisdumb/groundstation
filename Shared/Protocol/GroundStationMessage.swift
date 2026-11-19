@@ -42,6 +42,9 @@ struct GroundStationMessage: Codable {
         /// This is not the UI telemetry demo simulator.
         var djiSimulatorActive: Bool? = nil
         var virtualSticksEngaged: Bool? = nil
+        /// True only for an explicitly authorized, short-lived live-flight session.
+        /// This authorization is revoked when the bridge, aircraft or link drops.
+        var liveFlightAuthorized: Bool? = nil
         var flightControlStatus: String? = nil
         // DJI native ActiveTrack status; unavailable in baseline builds.
         var activeTrackState: String? = nil
@@ -65,6 +68,7 @@ struct GroundStationCommand: Codable {
         case motorsOn, motorsOff
         case enableSticks, disableSticks, sticks
         case startDJISimulator, stopDJISimulator, verifyFlightKey
+        case authorizeLiveFlight, revokeLiveFlight
         case activeTrackPrepare, activeTrackConfirm, activeTrackStop
     }
     var version: Int = 1
