@@ -26,6 +26,7 @@ targets:
         excludes:
           - Info.plist
           - InfoPlist-Additions.md
+          - DJIWidget-Bridging-Header.h
       - path: Shared/Protocol
     configFiles:
       Debug: Configurations/BridgeDebug.xcconfig
@@ -36,3 +37,4 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: iOSFlightBridge/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: iOSFlightBridge/DJIWidget-Bridging-Header.h

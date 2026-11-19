@@ -5,43 +5,49 @@ struct BridgeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 Label("Mavic Flight Bridge", systemImage: "antenna.radiowaves.left.and.right")
                     .font(.title2.bold())
-                    .lineLimit(2)
-                Text("The Mac is the control station. Keep this iPhone app open and connected to the RC.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                GroupBox("Mac pairing") {
-                    VStack(alignment: .leading, spacing: 10) {
+                Text("Mac-controlled communications relay. Leave this app open with the iPhone connected to the remote controller.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                GroupBox("Pair with Mac") {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text(server.pairingCode)
-                            .font(.system(size: 38, weight: .bold, design: .monospaced))
+                            .font(.system(size: 36, weight: .bold, design: .monospaced))
                             .textSelection(.enabled)
-                        Text("Enter this six-digit code on the Mac. The code changes when the bridge app restarts.")
+                        Text("Enter this code on the Mac. No flight controls are on this phone.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox("Network server") {
                     VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("Status", value: server.running ? "Listening" : "Stopped")
-                        LabeledContent("IP address", value: server.localAddress ?? "Finding Wi-Fi address…")
+                        LabeledContent("Address", value: server.localAddress ?? "Finding Wi-Fi address…")
                         LabeledContent("Port", value: "8765")
-                        Button(server.running ? "Stop server" : "Start server") {
+                        Button(server.running ? "Stop" : "Start") {
                             server.running ? server.stop() : server.start()
                         }
                     }
                 }
-                GroupBox("DJI aircraft") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(server.djiStatus).font(.headline)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Read-only diagnostics and DJI SDK relay. Flight controls are operated from the Mac.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                GroupBox("DJI link") {
+                    Text(server.djiStatus).font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("Camera video decoder (iPhone)") {
+                    DJIFramePreviewSurface()
+                        .frame(height: 155)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(alignment: .bottomLeading) {
+                            Text("Preview on Mac uses sampled frames, not flight-quality FPV")
+                                .font(.system(size: 9))
+                                .padding(6)
+                                .background(.black.opacity(0.7))
+                        }
                 }
                 Text(server.lastEvent).font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-            }
-            .padding(20)
+            }.padding(16)
         }
         .onAppear { server.start() }
         .onDisappear { server.stop() }
