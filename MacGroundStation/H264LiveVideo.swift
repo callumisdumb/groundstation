@@ -3,6 +3,7 @@ import AVFoundation
 import Combine
 import CoreMedia
 import Network
+import SwiftUI
 
 /// Separate H.264 transport and decoder. Video is NOT multiplexed with
 /// flight telemetry or control messages, preventing encoded video backpressure
