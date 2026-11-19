@@ -1,7 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct BridgeView: View {
     @StateObject private var server = BridgeServer()
+    @State private var showFlightKey = false
+    @State private var copiedKey = false
 
     var body: some View {
         ScrollView {
@@ -18,6 +21,39 @@ struct BridgeView: View {
                             .textSelection(.enabled)
                         Text("Enter this code on the Mac. No flight controls are on this phone.")
                             .font(.caption).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("Encrypted Mac flight-control pairing") {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Label("256-bit flight key · one-time setup", systemImage: "lock.shield.fill")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Copy this key once to the Mac's Connect panel. The key is stored in both devices' Keychains and is never sent over the Wi-Fi link.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if showFlightKey {
+                            Text(server.flightAccessKey)
+                                .font(.system(size: 12, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("••••••••••••••••••••••••••••••••")
+                                .font(.system(size: 13, design: .monospaced))
+                        }
+                        HStack {
+                            Button {
+                                UIPasteboard.general.string = server.flightAccessKey
+                                copiedKey = true
+                            } label: {
+                                Label(copiedKey ? "Copied" : "Copy flight key",
+                                      systemImage: copiedKey ? "checkmark" : "doc.on.doc")
+                            }
+                            .disabled(server.flightAccessKey.isEmpty)
+                            Button(showFlightKey ? "Hide" : "Reveal") {
+                                showFlightKey.toggle()
+                            }
+                        }
+                        Text("Keep this key private. Flight commands stay locked until the Mac verifies it.")
+                            .font(.caption2).foregroundStyle(.orange)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox("Network server") {
