@@ -94,6 +94,20 @@ struct CockpitWorkspace: View {
                     Text("\(video.framesPerSecond) FPS")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundStyle(GSPalette.cyan)
+                    if video.vision.enabled || video.vision.selectedBounds != nil {
+                        GSStatusChip(label: "AI VISION", kind: .neutral)
+                    }
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            cameraFocusMode.toggle()
+                        }
+                    } label: {
+                        Image(systemName: cameraFocusMode ?
+                              "rectangle.split.2x1" : "arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(GSPalette.muted)
+                    .help(cameraFocusMode ? "Show split camera and map" : "Expand camera and hide map")
                 }
                 ZStack {
                     H264LiveVideoView(display: video.display)
@@ -134,6 +148,7 @@ struct CockpitWorkspace: View {
                         .padding(9)
                         .background(.black.opacity(0.70))
                     }
+                    .allowsHitTesting(false)
                 }
                 HStack(spacing: 9) {
                     Button { client.send(.takePhoto) } label: {
