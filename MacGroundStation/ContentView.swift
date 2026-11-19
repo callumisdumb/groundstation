@@ -115,9 +115,12 @@ struct ContentView: View {
             Spacer(minLength: 8)
 
             if workspace == .cockpit {
-                Text("FLIGHT OUTPUT LOCKED")
+                Text(client.djiSimulatorActive && client.flightReady
+                     ? "DJI SIM · CONTROL READY"
+                     : (client.flightKeyVerified ? "LIVE FLIGHT REQUIRES COMMISSIONING" : "PAIR FLIGHT KEY TO ENABLE SIM"))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(client.djiSimulatorActive && client.flightReady
+                                     ? Color.green : Color.orange)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 6)
                     .background(Color.orange.opacity(0.12))
@@ -203,6 +206,29 @@ struct ContentView: View {
                 SecureField("From iOSFlightBridge", text: $client.pairingCode)
                     .textFieldStyle(.roundedBorder)
             }
+            Divider()
+            HStack(spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(client.flightKeyVerified ? .green : .orange)
+                Text("ENCRYPTED FLIGHT CONTROL")
+                    .font(.system(size: 10, weight: .bold))
+                Spacer()
+                Text(client.flightKeyVerified ? "VERIFIED" : "NOT PAIRED")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(client.flightKeyVerified ? .green : .orange)
+            }
+            Text("One-time setup: copy the flight access key from iOSFlightBridge on your iPhone. Unlike the six-digit code, this is a private 256-bit key stored in Keychain.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            SecureField("Paste 256-bit flight access key", text: $client.flightKeyInput)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                client.saveFlightKey()
+            } label: {
+                Label("Save & verify flight key", systemImage: "checkmark.shield")
+            }
+            .disabled(!FlightSecurity.validKey(client.flightKeyInput))
             HStack {
                 Button {
                     UserDefaults.standard.set(host, forKey: "GroundStationBridgeIP")
