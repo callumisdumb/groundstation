@@ -185,6 +185,11 @@ final class BridgeClient: ObservableObject {
                         }
                         if action == .enableSticks {
                             virtualSticksEnabled = message.payload.commandAccepted == true
+                            if virtualSticksEnabled {
+                                stickAxes = (0, 0, 0, 0)
+                                startStickTimerIfNeeded()
+                                emitSticks()
+                            }
                         }
                         if action == .disableSticks || action == .disarmFlight {
                             virtualSticksEnabled = false

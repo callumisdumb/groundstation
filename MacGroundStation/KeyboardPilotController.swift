@@ -18,6 +18,7 @@ struct PilotAxes: Equatable {
 
 @MainActor
 final class KeyboardPilotController: ObservableObject {
+    @Published var preciseMode = true
     @Published var keyboardEnabled = false {
         didSet { if !keyboardEnabled { releaseAll() } }
     }
@@ -34,7 +35,7 @@ final class KeyboardPilotController: ObservableObject {
 
     /// Tracks only keys used by the cockpit. W/S translation, A/D strafe,
     /// Q/E yaw, C/Z altitude and SPACE as held-to-move interlock.
-    private let mapped: Set<String> = ["w", "a", "s", "d", "q", "e", "z", "c", "space"]
+    private let mapped: Set<String> = ["w", "a", "s", "d", "q", "e", "z", "c", "space", "x"]
 
     func install(client: BridgeClient) {
         self.client = client
@@ -60,9 +61,9 @@ final class KeyboardPilotController: ObservableObject {
     }
 
     func releaseAll() {
-        if sendingMovement {
-            client?.stopSticks()
-        }
+        // Escape, focus loss or switching screens releases DJI control
+        // authority. A normal SPACE release requests a neutral hover only.
+        client?.releaseVirtualSticks()
         sendingMovement = false
         lastAxes = PilotAxes()
         keysDown.removeAll()
@@ -91,9 +92,20 @@ final class KeyboardPilotController: ObservableObject {
         }
         let key = event.keyCode == 49 ? "space" :
             (event.charactersIgnoringModifiers ?? "").lowercased()
-        guard mapped.contains(key) else {
-            if event.keyCode == 53 { releaseAll() } // ESC
+        if event.keyCode == 53 {
+            releaseAll() // ESC always disengages.
+            return nil
+        }
+        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false {
             return event
+        }
+        guard mapped.contains(key) else { return event }
+        if key == "x" {
+            if event.type == .keyDown && !event.isARepeat {
+                preciseMode.toggle()
+                status = preciseMode ? "PRECISION mode · 0.35 m/s" : "NORMAL mode · 0.8 m/s"
+            }
+            return nil
         }
         if event.type == .keyDown {
             if event.isARepeat { return nil }
@@ -112,11 +124,14 @@ final class KeyboardPilotController: ObservableObject {
             (keyset.contains(positive) ? maxSpeed : 0) -
             (keyset.contains(negative) ? maxSpeed : 0)
         }
+        let travel = preciseMode ? 0.35 : 0.8
+        let rotation = preciseMode ? 8.0 : 16.0
+        let climbRate = preciseMode ? 0.25 : 0.6
         axes = PilotAxes(
-            forward: component("w", "s", 0.6),
-            strafe: component("d", "a", 0.6),
-            turn: component("e", "q", 12),
-            climb: component("c", "z", 0.35))
+            forward: component("w", "s", travel),
+            strafe: component("d", "a", travel),
+            turn: component("e", "q", rotation),
+            climb: component("c", "z", climbRate))
 
         guard deadmanHeld, !axes.isNeutral else {
             if sendingMovement { client?.stopSticks() }

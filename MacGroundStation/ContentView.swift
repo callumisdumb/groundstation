@@ -58,6 +58,10 @@ struct ContentView: View {
             liveVideo.disconnect()
             client.disconnect()
         }
+        .onChange(of: workspace) { _ in
+            keyboard.keyboardEnabled = false
+            keyboard.releaseAll()
+        }
         .onChange(of: client.connected) { connected in
             keyboard.connectionChanged()
             if !connected { liveVideo.disconnect() }
