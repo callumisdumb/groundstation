@@ -189,9 +189,13 @@ final class BridgeClient: ObservableObject {
                 case .aircraftStatus:
                     latestStatus = message
                     lastTelemetryAt = Date()
-                    if message.payload.djiSimulatorActive == true ||
-                       message.payload.liveFlightAuthorized == false {
+                    if message.payload.djiSimulatorActive == true {
                         liveFlightAcknowledged = false
+                    } else if let authorized = message.payload.liveFlightAuthorized {
+                        // DJI-originated bridge state is authoritative; this also
+                        // recovers if the authorization acknowledgement arrives
+                        // before a stale telemetry packet.
+                        liveFlightAcknowledged = authorized
                     }
                     if let engaged = message.payload.virtualSticksEngaged {
                         virtualSticksEnabled = engaged
