@@ -203,3 +203,46 @@ GroundStation's UI is entirely **native SwiftUI/AppKit/MapKit**, with no
 Tailwind, web view or browser-dependent styling. The expanded live camera
 mode and material-based panels are influenced by the workspace patterns
 found in DJI FlightHub 2, but independently designed and branded.
+
+
+## FlightHub-style cockpit layout revision (2026-11-19)
+
+The active Mac **Virtual Cockpit** screen was rebuilt after comparing our UI with
+DJI's official FlightHub 2 screenshots and documentation:
+- https://fh.dji.com/user-manual/en/real-time-project-information/virtual-cockpit.html
+- https://enterprise-insights.dji.com/blog/dji-flighthub-2-virtual-cockpit-now-available
+
+The original three-column, card-heavy dashboard is no longer the active cockpit.
+The new \`FlightCockpitView.swift\` uses:
+- 35%-width **full-height satellite map** on the **left**
+- 65%-width **full-height live H.264 feed** on the **right**
+- An uninterrupted **bottom OSD deck** for battery, heading dial, altitude,
+  horizontal/vertical velocity, flight mode, keyboard preview and flight status
+- Compact **top command bar**, with connection pairing in a popover instead of
+  using a permanent form row
+- Small map toolbar and camera tool rail; AI tracking, camera/gimbal settings,
+  aircraft status and flight control notes open as a **contextual drawer**
+  over the camera only when requested
+- **Map focus** toggles from 35% to 54% map width, without removing the video
+
+This is an independently coded **native SwiftUI/AppKit/MapKit** interface,
+not a DJI FlightHub 2 frontend, nor a Tailwind CSS implementation. The
+original Mavic Pro is not officially compatible with FlightHub 2.
+
+No changes were made to the iPhone SDK bridge or motor/flight safety lock
+in this UI-only iteration.
+
+### Update the Mac UI only
+
+On the **already checked-out** \`feature/dji-v4-readonly\` branch:
+
+\`\`\`bash
+git pull --ff-only origin feature/dji-v4-readonly
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+\`\`\`
+
+Select \`MacGroundStation\` in Xcode and press **Cmd+R**. The iPhone bridge
+does not need reinstalling for this layout-only update. Click **Connect**
+in the upper right, enter your iPhone's IP and the six-digit bridge code.

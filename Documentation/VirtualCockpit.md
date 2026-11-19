@@ -105,3 +105,35 @@ scaffold-only CI and require your actual iPhone 15 and aircraft.
 Safety: follow UK CAA rules and maintain visual line of sight. A Wi-Fi
 video display is not a replacement for the original RC link or in-person
 pilot observation.
+
+
+## Revised cockpit presentation (2026-11-19)
+
+The main Virtual Cockpit is **no longer** the previous side-navigation,
+three-column set of cards. It has been replaced by a new
+\`MacGroundStation/FlightCockpitView.swift\`, after comparing the layout against
+the official DJI FlightHub 2 interface.
+
+- Full-height **MapKit satellite map on the left**; overlays show current
+  aircraft GPS and the planned mission only when the data exists.
+- Large full-height **native H.264 camera** on the right with compact status
+  overlay, AI target selection and unobtrusive camera controls.
+- Fixed **bottom instrument/control ribbon**, including a graphical orientation
+  dial, battery, satellites, speed, altitude, velocity, flight mode, keyboard
+  preview and deliberately disabled flight-actuation controls.
+- Connection and pairing via a top-right macOS popover, not a wide toolbar
+  containing permanent IP and pairing input fields.
+- Map-focus/video-focus split toggle and a context drawer for camera,
+  aircraft status, AI tracking and flight-control information.
+- Mission Planning and Activity remain available from the compact top menu.
+
+The design follows DJI's **spatial hierarchy** (map / camera / instrument
+ribbon / contextual tools), but uses independent colors, typography,
+symbol art and native SwiftUI code. This is not an official DJI UI integration.
+
+The local **iPhone bridge protocol is unchanged** by this layout revision.
+Do not reinstall the phone simply to receive these visual changes.
+
+Hardware telemetry, video decoding and original Mavic Pro DJI SDK v4 remain
+subject to real-device testing. Flight/motor/autonomous motion continue to be
+locked in the default build.
