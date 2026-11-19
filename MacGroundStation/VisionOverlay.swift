@@ -147,13 +147,7 @@ struct VisionVideoOverlay: View {
 struct VisionControlPanel: View {
     @ObservedObject var vision: VisionTrackingEngine
     @ObservedObject var client: BridgeClient
-    @State private var selectedKind: ManualObjectKind = .vehicle
-
-    private enum ManualObjectKind: String, CaseIterable, Identifiable {
-        case vehicle = "Vehicle / object"
-        case person = "Person"
-        var id: String { rawValue }
-    }
+    @Binding var manualLabel: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -197,10 +191,9 @@ struct VisionControlPanel: View {
             Divider().overlay(GSPalette.border)
 
             Text("Select subject").font(.system(size: 11, weight: .semibold))
-            Picker("Manual selection", selection: $selectedKind) {
-                ForEach(ManualObjectKind.allCases) { kind in
-                    Text(kind.rawValue).tag(kind)
-                }
+            Picker("Manual selection", selection: $manualLabel) {
+                Text("Vehicle / object").tag("Vehicle / object")
+                Text("Person").tag("Person")
             }
             .labelsHidden()
             .pickerStyle(.segmented)
@@ -267,5 +260,4 @@ struct VisionControlPanel: View {
         }
     }
 
-    var manualSelectionLabel: String { selectedKind.rawValue }
 }

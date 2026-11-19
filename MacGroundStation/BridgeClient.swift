@@ -161,6 +161,20 @@ final class BridgeClient: ObservableObject {
         }
     }
 
+
+    /// Stage a selected video rectangle for DJI's native ActiveTrack.
+    /// DJI-side movement is still rejected until safety commissioning.
+    func prepareActiveTrack(rect: TrackingRectangle) {
+        guard rect.isValid else {
+            addLog("Selected subject is outside the video frame")
+            return
+        }
+        let command = GroundStationCommand(pairingCode: pairingCode,
+                                           action: .activeTrackPrepare,
+                                           trackingRect: rect)
+        sendCommand(command)
+    }
+
     func send(_ action: GroundStationCommand.Action, value: Double? = nil) {
         let command = GroundStationCommand(pairingCode: pairingCode, action: action, value: value)
         sendCommand(command)

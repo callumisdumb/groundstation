@@ -13,7 +13,8 @@ struct CockpitWorkspace: View {
     @Binding var followAircraft: Bool
     let track: [CLLocationCoordinate2D]
 
-    @State private var inspector: ControlTab = .flight
+    @State private var inspector: ControlTab = .vision
+    @State private var manualTrackingLabel = "Vehicle / object"
     @State private var gimbalPitch = -30.0
     @State private var confirmAction: GroundStationCommand.Action?
 
@@ -24,6 +25,7 @@ struct CockpitWorkspace: View {
         case flight = "Flight"
         case camera = "Camera"
         case aircraft = "Status"
+        case vision = "AI Tracking"
         var id: Self { self }
     }
 
@@ -95,6 +97,12 @@ struct CockpitWorkspace: View {
                         .frame(height: 360)
                         .background(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
+                    if video.framesDisplayed > 0 {
+                        VisionVideoOverlay(vision: video.vision,
+                                           client: client,
+                                           manualLabel: manualTrackingLabel)
+                            .frame(height: 360)
+                    }
                     if video.framesDisplayed == 0 {
                         VStack(spacing: 9) {
                             Image(systemName: "video.slash")
@@ -247,6 +255,10 @@ struct CockpitWorkspace: View {
                     case .flight: flightPanel
                     case .camera: cameraPanel
                     case .aircraft: aircraftPanel
+                    case .vision:
+                        VisionControlPanel(vision: video.vision,
+                                           client: client,
+                                           manualLabel: $manualTrackingLabel)
                     }
                 }
             }
