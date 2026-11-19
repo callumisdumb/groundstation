@@ -14,6 +14,9 @@ struct BridgeView: View {
                 Text("Mac-controlled communications relay. Leave this app open with the iPhone connected to the remote controller.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                Label("Screen stays awake while Flight Bridge is active", systemImage: "sun.max")
+                    .font(.caption)
+                    .foregroundStyle(.green)
                 GroupBox("Pair with Mac") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(server.pairingCode)

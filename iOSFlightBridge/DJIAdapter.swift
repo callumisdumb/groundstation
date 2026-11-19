@@ -430,7 +430,7 @@ final class DJIAdapter: NSObject {
         let data = DJIVirtualStickFlightControlData(
             pitch: Float(axes.pitch), roll: Float(axes.roll),
             yaw: Float(axes.yaw), verticalThrottle: Float(axes.vertical))
-        fc.sendVirtualStickFlightControlData(data, withCompletion: nil)
+        fc.send(data, withCompletion: nil)
         #endif
     }
 
