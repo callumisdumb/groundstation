@@ -15,3 +15,6 @@ xcuserdata/
 
 # Local DJI SDK key. Never upload.
 Configurations/DJIKeys.xcconfig
+
+# Optional Apple Core ML object detection weights downloaded locally.
+MacGroundStation/Models/GroundStationDetector.mlmodel
