@@ -13,6 +13,9 @@ final class BridgeServer: ObservableObject {
     @Published private(set) var lastEvent = "Waiting"
     @Published private(set) var djiStatus = "DJI SDK not linked (simulator mode)"
     @Published private(set) var pairingCode = String(Int.random(in: 100_000...999_999))
+    /// 256-bit shared key shown once during setup and stored in Keychain.
+    /// Never sent over the 8765/8766 connections.
+    @Published private(set) var flightAccessKey = FlightKeyStore.loadOrCreate()
 
     private var listener: NWListener?
     private var client: NWConnection?
@@ -165,33 +168,60 @@ final class BridgeServer: ObservableObject {
         while let newline = commandBuffer.firstIndex(of: 0x0A) {
             let line = Data(commandBuffer.prefix(upTo: newline))
             commandBuffer.removeSubrange(...newline)
-            do {
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let command = try decoder.decode(GroundStationCommand.self, from: line)
-                guard command.version == 1,
-                      abs(Date().timeIntervalSince(command.timestamp)) <= 3,
-                      command.id.count <= 80, !seenCommands.contains(command.id) else {
-                    sendResult(id: command.id, accepted: false,
-                               detail: "Expired, duplicate or unsupported command")
-                    continue
-                }
-                guard command.pairingCode == pairingCode else {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            // Flight actions require AES-256-GCM with a random, locally
+            // provisioned key. Camera and diagnostics remain plaintext on LAN.
+            if let packet = try? decoder.decode(EncryptedFlightPacket.self, from: line) {
+                guard let command = FlightSecurity.open(packet, key: flightAccessKey) else {
                     badPairingAttempts += 1
-                    sendResult(id: command.id, accepted: false, detail: "Incorrect pairing code")
-                    if badPairingAttempts >= 5 {
-                        lastEvent = "Too many incorrect pairing attempts"
-                        endSession()
-                    }
+                    lastEvent = "Encrypted flight packet authentication failed"
+                    if badPairingAttempts >= 5 { endSession() }
                     continue
                 }
-                seenCommands.insert(command.id)
-                if seenCommands.count > 250 { seenCommands.removeAll() }
-                djiAdapter.handle(command)
-            } catch {
-                lastEvent = "Invalid command JSON: \(error.localizedDescription)"
+                validateAndDispatch(command, encrypted: true)
+            } else if let command = try? decoder.decode(GroundStationCommand.self, from: line) {
+                validateAndDispatch(command, encrypted: false)
+            } else {
+                lastEvent = "Invalid bridge command packet"
             }
         }
+    }
+
+    private func validateAndDispatch(_ command: GroundStationCommand, encrypted: Bool) {
+        guard command.version == 1,
+              abs(Date().timeIntervalSince(command.timestamp)) <= 3,
+              command.id.count <= 80, !seenCommands.contains(command.id) else {
+            sendResult(id: command.id, accepted: false,
+                       detail: "Expired, duplicate or unsupported command")
+            return
+        }
+        guard command.pairingCode == pairingCode else {
+            badPairingAttempts += 1
+            sendResult(id: command.id, accepted: false, detail: "Incorrect pairing code")
+            if badPairingAttempts >= 5 {
+                lastEvent = "Too many incorrect pairing attempts"
+                endSession()
+            }
+            return
+        }
+        guard !command.action.requiresEncryptedFlightLink || encrypted else {
+            sendResult(id: command.id, accepted: false,
+                       detail: "Flight commands require the paired encrypted control key")
+            return
+        }
+
+        seenCommands.insert(command.id)
+        if seenCommands.count > 250 { seenCommands.removeAll() }
+        badPairingAttempts = 0
+
+        if command.action == .verifyFlightKey {
+            sendResult(id: command.id, accepted: encrypted,
+                       detail: encrypted ? "Flight key verified for this session" : "Flight key missing")
+            return
+        }
+        djiAdapter.handle(command)
     }
 
     private func sendCurrentStatus() {
