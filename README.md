@@ -72,8 +72,210 @@ The root `Podfile` is a **future integration aid**, not required for the initial
 
 ## Safety
 
-No live flight commands are present. Never assume network loss means the aircraft has stopped. Keep DJI's physical controller and built-in failsafes available, and comply with applicable [UK CAA drone rules](https://www.caa.co.uk/drones/) including visual-line-of-sight obligations.
+Live-flight commands are now available only through an explicit, short-lived LIVE authorization. These commands have not been validated in actual flight. Never assume network loss means the aircraft has stopped. Keep DJI's physical controller and built-in failsafes available, and comply with applicable [UK CAA drone rules](https://www.caa.co.uk/drones/) including visual-line-of-sight obligations.
 
 ## Documentation
 
 Read [DJI integration](Documentation/DJIIntegration.md) and [test plan](Documentation/TestingPlan.md) before extending this prototype.
+
+
+## Mac-only controls (development branch)
+
+The Mac application is intended to be the **only operator interface**. The iPhone runs
+as a foreground communications bridge attached to the original Mavic Pro RC by USB-C.
+The user must initially open the bridge and enter the six-digit pairing code on Mac,
+but gimbal/camera/mission/flight operation will be managed from the Mac.
+
+On `feature/dji-v4-readonly`, the UI contains aircraft diagnostics, map, DJI camera
+commands, gimbal pitch controls, and a prototype for flight actions / held virtual sticks.
+**Manual LIVE flight now requires independent authorization** on Mac and fresh DJI preflight checks on iPhone. Real-aircraft operation is still an unverified hardware test; keep the physical controller and visual line of sight.
+
+Camera video now has a **continuous H.264** path: the iPhone forwards DJI's compressed
+primary camera feed over a separate paired TCP port **8766**; the Mac parses and
+displays H.264 using Apple's AVSampleBufferDisplayLayer. The telemetry/command
+port **8765** remains separate. This is a development live preview, **not** a
+flight-certified low-latency FPV system. DJIWidget may still require legacy
+Xcode compatibility work. See
+[Mac-only controls and testing](Documentation/MacControlTesting.md).
+
+
+## Live H.264 camera preview (experimental)
+
+See [Live Video Setup and Troubleshooting](Documentation/LiveVideo.md).
+Rebuild **both** Xcode targets after pulling this branch. When the Mac connects
+to the iPhone on port 8765, it also connects to the continuous DJI video relay
+on port 8766 using the six-digit code. The Mac decodes the incoming compressed
+H.264 stream instead of waiting for a JPEG snapshot every two seconds.
+
+> If the video panel stays black, don't fly or guess at video latency; check
+> the hardware aircraft link and follow the video diagnostics.
+
+
+## FlightHub-inspired Virtual Cockpit redesign
+
+GroundStation uses an **original dark operations design** with the core interaction
+patterns studied from the current [DJI FlightHub 2 Virtual Cockpit manual](https://fh.dji.com/user-manual/en/real-time-project-information/virtual-cockpit.html).
+It is **not** DJI FlightHub software and the original Mavic Pro is **not**
+FlightHub 2 Virtual Cockpit compatible.
+
+The Mac app now includes three workspaces:
+1. **Virtual Cockpit** — large continuous H.264 camera view, live MapKit
+   aircraft/home/route overlays, flight instruments and Mac-only camera/gimbal controls.
+2. **Mission Planning** — locally saved flight-route drafts with manual waypoint
+   editing, route overlays and GeoJSON export. This is **offline planning only**;
+   uploading or executing waypoint missions is not implemented.
+3. **Activity & Logs** — live operator and connection events, with unique IDs.
+
+### Keyboard piloting preview
+
+In Virtual Cockpit, enable **Capture keyboard in cockpit**, then use:
+
+| Input | Proposed movement |
+| --- | --- |
+| W / S | Forward / back |
+| A / D | Left / right |
+| Q / E | Yaw left / right |
+| C / Z | Ascend / descend |
+| SPACE (held) | Additional held-to-move interlock |
+| Esc, focus loss, key release | Release keyboard movement |
+
+The new keyboard monitor displays key-state feedback even while flight actuation
+is **disabled**. Unlike DJI FlightHub 2, we require holding SPACE as a dead-man
+interlock for this custom application's eventual control system. Space is *not*
+a takeoff, land or emergency-stop button.
+
+**Current safety condition:** manual real flight is gated by the LIVE authorization checklist, fresh aircraft telemetry and separate takeoff confirmation. Autonomous person/vehicle following remains disabled. See [LIVE flight guide](Documentation/LiveFlight.md).
+
+### Upgrade (existing branch, no branch switch)
+
+\`\`\`bash
+git pull --ff-only origin feature/dji-v4-readonly
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+\`\`\`
+
+Build both \`MacGroundStation\` and \`iOSFlightBridge\` on the Mac and iPhone.
+
+
+## AI person and vehicle tracking (native Mac)
+
+GroundStation analyses decoded H.264 camera frames **locally** using Apple Vision.
+Enable **AI Tracking** in the Virtual Cockpit inspector, click a detected
+person, or draw a rectangle around any vehicle/object to track it.
+Bounding boxes, confidence and lost-target indicators appear on the live feed.
+
+Person detection works without extra downloads. For automatic car, bus, truck,
+motorbike and bicycle recognition, install Apple's optional Core ML YOLOv3 Tiny
+model on your Mac (source: Apple ML Models):
+
+```bash
+bash scripts/install_vehicle_detector.sh
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+```
+
+This downloads the 8-bit model directly from Apple's public model repository
+into a **gitignored** local file. Build the Mac scheme again; the inspector
+will indicate whether the detector was successfully loaded.
+See [AI Tracking Setup](Documentation/AITracking.md).
+
+The native DJI Mavic Pro **ActiveTrack** API offers a separate two-stage
+subject-selection → confirmation → autonomous following mechanism.
+The bridge now includes command and status scaffolding for this SDK flow.
+**Actual autonomous aircraft following and steering are deliberately locked
+by default** until the network transport, physical-controller failsafe and
+subject-loss procedures have been verified. A local green AI tracking box
+does not mean the aircraft is following that subject.
+
+GroundStation's UI is entirely **native SwiftUI/AppKit/MapKit**, with no
+Tailwind, web view or browser-dependent styling. The expanded live camera
+mode and material-based panels are influenced by the workspace patterns
+found in DJI FlightHub 2, but independently designed and branded.
+
+
+## FlightHub-style cockpit layout revision (2026-11-19)
+
+The active Mac **Virtual Cockpit** screen was rebuilt after comparing our UI with
+DJI's official FlightHub 2 screenshots and documentation:
+- https://fh.dji.com/user-manual/en/real-time-project-information/virtual-cockpit.html
+- https://enterprise-insights.dji.com/blog/dji-flighthub-2-virtual-cockpit-now-available
+
+The original three-column, card-heavy dashboard is no longer the active cockpit.
+The new \`FlightCockpitView.swift\` uses:
+- 35%-width **full-height satellite map** on the **left**
+- 65%-width **full-height live H.264 feed** on the **right**
+- An uninterrupted **bottom OSD deck** for battery, heading dial, altitude,
+  horizontal/vertical velocity, flight mode, keyboard preview and flight status
+- Compact **top command bar**, with connection pairing in a popover instead of
+  using a permanent form row
+- Small map toolbar and camera tool rail; AI tracking, camera/gimbal settings,
+  aircraft status and flight control notes open as a **contextual drawer**
+  over the camera only when requested
+- **Map focus** toggles from 35% to 54% map width, without removing the video
+
+This is an independently coded **native SwiftUI/AppKit/MapKit** interface,
+not a DJI FlightHub 2 frontend, nor a Tailwind CSS implementation. The
+original Mavic Pro is not officially compatible with FlightHub 2.
+
+That earlier UI-only iteration changed no flight logic. A later update added the separately authorized experimental LIVE flight mode.
+
+### Update the Mac UI only
+
+On the **already checked-out** \`feature/dji-v4-readonly\` branch:
+
+\`\`\`bash
+git pull --ff-only origin feature/dji-v4-readonly
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+\`\`\`
+
+Select \`MacGroundStation\` in Xcode and press **Cmd+R**. The iPhone bridge
+does not need reinstalling for this layout-only update. Click **Connect**
+in the upper right, enter your iPhone's IP and the six-digit bridge code.
+
+
+## Explicitly authorized LIVE flight (experimental — physical aircraft)
+
+**The live-flight code is implemented but has NOT been flight-tested by the
+project maintainers. Simulator success does not validate live movement.**
+
+The Mac Virtual Cockpit → **Control** panel supports separate modes:
+- **DJI Simulator** — flight commands affect DJI's flight simulator.
+- **LIVE FLIGHT** — actual Mavic Pro flight controller receives commands.
+
+LIVE mode is **not automatically enabled** when connecting. The Mac pilot must
+connect using the six-digit code and the 256-bit Keychain flight key, verify a
+real, grounded Mavic Pro aircraft link, complete the live preflight checklist
+and type \`ENABLE LIVE FLIGHT\`. The iPhone independently rejects live
+authorization unless DJI reports a linked real Mavic Pro, grounded status,
+no IMU preheat, home point, GPS ≥10 satellites, battery ≥40% and fresh flight
+telemetry. The authorization lasts 15 minutes and is cleared on link loss.
+
+Once authorized, the Mac can:
+- Arm for 30 seconds, confirm **REAL takeoff** via DJI's startTakeoff API
+- Enable Virtual Sticks after the aircraft is airborne, then control using
+  **SPACE+WASD/QE/CZ** at 10 Hz with limited velocities
+- Land or initiate DJI Return-to-Home (RTH) from Mac
+- Release control to the physical RC using ESC or **Release to controller**
+- Revoke the live pilot session and stop accepting new movement commands
+
+The iPhone independently filters commands, validates telemetry freshness,
+maintains its own Virtual Stick watchdog, and sends neutral control before
+disabling Virtual Sticks when control is lost.
+
+**Important:** Never attempt real takeoff with propellers removed. Bench tests
+with propellers removed are strictly for non-takeoff diagnostics and simulator
+testing. Real flight requires a safe outdoor area and a competent operator
+with the physical remote controller ready to override. UK users must comply
+with the CAA Drone Code and current airspace permissions.
+
+This is NOT flight-certified software; do not rely on the streamed Wi-Fi
+video as the sole flight viewpoint. Actual network, signal-loss, battery,
+GPS, obstacle, landing-confirmation and manual-override behavior remain
+hardware validation tasks. The RC→aircraft lost-signal action must be configured
+via DJI GO 4 in advance. **AI autonomous following is still locked**.
+
+Full details: [LIVE flight commissioning](Documentation/LiveFlight.md).

@@ -1,30 +1,29 @@
 # Test Plan
 
-## A: Local bridge (current prototype)
+## Milestone A (verified by operator screenshot)
 
-- Install and run the Mac application.
-- Install and run the iPhone application on a physical iPhone 15.
-- Confirm Local Network permission is granted on iPhone.
-- Confirm both devices are on the same Wi-Fi LAN.
-- Enter the iPhone IPv4 address shown on-screen into the Mac app, port 8765.
-- Confirm the Mac displays a SIMULATED status every second.
-- Verify disconnect/reconnect, and that no take-off, landing or movement controls exist.
-- Do not test the prototype on a public network.
+- [x] iOS bridge and Mac dashboard communicate over local TCP port 8765.
+- [x] Mac receives one simulated \`aircraftStatus\` message per second.
+- [x] Source is explicitly marked SIMULATED.
 
-## B: DJI read-only integration (not implemented)
+## Milestone B: DJI registration and read-only telemetry (not yet verified)
 
-- Build and run the *official* DJI Mobile SDK iOS Swift sample.
-- Connect the original Mavic Pro controller to iPhone 15 with compatible USB-C data cable.
-- Confirm SDK registration and product connection.
-- Confirm read-only aircraft state, GPS and battery callbacks.
-- Replace only the simulated status provider, preserving the \`simulated\` marker distinction.
-- Re-test network disconnects and unexpected aircraft disconnects.
+- [ ] Confirm the DJI Developer portal app is activated.
+- [ ] Confirm app Bundle Identifier exactly matches \`com.benmacaulay.mavic.flightbridge\`.
+- [ ] Configure local gitignored \`Configurations/DJIKeys.xcconfig\`.
+- [ ] Check iOS/Xcode compatibility by building the official DJI iOS Swift sample.
+- [ ] Confirm official sample registers and detects original Mavic Pro.
+- [ ] Build the branch \`feature/dji-v4-readonly\` with CocoaPods linked.
+- [ ] Remove drone propellers for bench testing.
+- [ ] Connect original Mavic Pro RC to iPhone 15 via USB-C data cable; verify aircraft link.
+- [ ] Show actual aircraft connection, battery, location, speed and altitude in Mac.
+- [ ] Verify disconnected aircraft clears stale readings.
+- [ ] Verify Mac Wi-Fi disconnect leaves aircraft flight unaffected.
+- [ ] Confirm no flight-command methods are present.
 
-## C: Video (not implemented)
+## Later (not implemented)
 
-- Render SDK video locally on iPhone using the documented sample.
-- Transport encoded video to Mac only after measuring latency and dropped frames.
-
-## D: Flight control (not implemented)
-
-Separate flight-safety engineering review required: operator arming, bounded command set, command sequence numbers/freshness, link-loss watchdog, RTH configuration, simulator testing, controlled ground testing, physical controller fallback and UK CAA compliance.
+- [ ] Live video rendering and streaming.
+- [ ] Camera/gimbal controls.
+- [ ] Flight planning (offline first).
+- [ ] Separately reviewed flight-control implementation.

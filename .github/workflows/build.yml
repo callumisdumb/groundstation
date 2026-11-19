@@ -1,0 +1,45 @@
+name: Validate Mac and iPhone bridge scaffold
+on:
+  push:
+    branches:
+      - feature/dji-v4-readonly
+  pull_request:
+    branches:
+      - main
+jobs:
+  build:
+    name: Compile scaffold (no DJI pods)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build Mac application
+        run: |
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme MacGroundStation \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Verify optional Apple Core ML object detection model bundles
+        run: |
+          bash scripts/install_vehicle_detector.sh
+          xcodegen generate
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme MacGroundStation \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/groundstation-ai" \
+            CODE_SIGNING_ALLOWED=NO build
+          find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
+      - name: Build iPhone bridge in simulator-only mode
+        run: |
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme iOSFlightBridge \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+# This only verifies the build WITHOUT DJI CocoaPods. DJI SDK v4 and DJIWidget
+# still require a physical iPhone 15/Xcode hardware compatibility test.

@@ -1,0 +1,3 @@
+// Include CocoaPods support settings when pods are installed.
+#include? "../Pods/Target Support Files/Pods-iOSFlightBridge/Pods-iOSFlightBridge.release.xcconfig"
+#include "Bridge.xcconfig"
