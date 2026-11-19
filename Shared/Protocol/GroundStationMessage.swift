@@ -38,6 +38,11 @@ struct GroundStationMessage: Codable {
         var homeLongitude: Double? = nil
         var imuPreheating: Bool? = nil
         var flightTimeSeconds: Int? = nil
+        /// True only when DJI's own flight simulator is actively running.
+        /// This is not the UI telemetry demo simulator.
+        var djiSimulatorActive: Bool? = nil
+        var virtualSticksEngaged: Bool? = nil
+        var flightControlStatus: String? = nil
         // DJI native ActiveTrack status; unavailable in baseline builds.
         var activeTrackState: String? = nil
         var activeTrackTargetRect: TrackingRectangle? = nil
@@ -59,6 +64,7 @@ struct GroundStationCommand: Codable {
         case armFlight, disarmFlight, takeoff, land, returnHome
         case motorsOn, motorsOff
         case enableSticks, disableSticks, sticks
+        case startDJISimulator, stopDJISimulator
         case activeTrackPrepare, activeTrackConfirm, activeTrackStop
     }
     var version: Int = 1
