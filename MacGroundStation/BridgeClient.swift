@@ -80,6 +80,7 @@ final class BridgeClient: ObservableObject {
     }
 
     func saveFlightKey() {
+        flightKeyInput = flightKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard FlightKeyStore.save(flightKeyInput) else {
             flightKeyVerified = false
             addLog("Invalid flight key — copy the complete key from the iPhone")

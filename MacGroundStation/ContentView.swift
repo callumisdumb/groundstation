@@ -117,13 +117,16 @@ struct ContentView: View {
             if workspace == .cockpit {
                 Text(client.djiSimulatorActive && client.flightReady
                      ? "DJI SIM · CONTROL READY"
-                     : (client.flightKeyVerified ? "LIVE FLIGHT REQUIRES COMMISSIONING" : "PAIR FLIGHT KEY TO ENABLE SIM"))
+                     : (client.liveFlightAuthorized
+                        ? "LIVE FLIGHT · AUTHORIZED"
+                        : (client.flightKeyVerified
+                           ? "LIVE MODE · PREFLIGHT REQUIRED"
+                           : "PAIR FLIGHT CONTROL KEY")))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(client.djiSimulatorActive && client.flightReady
-                                     ? Color.green : Color.orange)
+                    .foregroundStyle(client.flightReady ? Color.green : Color.orange)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.12))
+                    .background((client.flightReady ? Color.green : Color.orange).opacity(0.12))
                     .clipShape(Capsule())
             }
 
@@ -271,8 +274,9 @@ struct ContentView: View {
             Text("·")
             Text("LOCAL LINK ONLY")
             Text("·")
-            Text("FLIGHT ACTUATION DISABLED")
-                .foregroundStyle(.orange)
+            Text(client.liveFlightAuthorized ? "LIVE AIRCRAFT CONTROL · AUTHORIZED" :
+                 (client.djiSimulatorActive ? "DJI SIMULATOR" : "LIVE PREFLIGHT GATED"))
+                .foregroundStyle(client.flightReady ? .green : .orange)
         }
         .font(.system(size: 9, weight: .medium, design: .monospaced))
         .foregroundStyle(.white.opacity(0.48))
