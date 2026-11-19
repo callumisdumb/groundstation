@@ -1,15 +1,11 @@
 import Foundation
 
-/// A versioned, newline-delimited JSON envelope exchanged by Mac and iPhone.
-/// Keep DJI-specific SDK types entirely inside the iOS bridge.
+/// Single newline-delimited JSON protocol between the Mac operator and iPhone bridge.
+/// DJI SDK classes never cross the wire.
 struct GroundStationMessage: Codable {
     enum Kind: String, Codable {
-        case hello
-        case aircraftStatus
-        case heartbeat
-        case error
+        case hello, aircraftStatus, cameraFrame, commandResult, heartbeat, error
     }
-
     var version: Int = 1
     var kind: Kind
     var timestamp: Date = Date()
@@ -20,12 +16,53 @@ struct GroundStationMessage: Codable {
         var deviceName: String? = nil
         var connectionState: String? = nil
         var aircraftModel: String? = nil
+        var aircraftConnected: Bool? = nil
+        var controllerConnected: Bool? = nil
         var batteryPercent: Int? = nil
         var latitude: Double? = nil
         var longitude: Double? = nil
         var altitudeMeters: Double? = nil
         var speedMetersPerSecond: Double? = nil
+        var velocityX: Double? = nil
+        var velocityY: Double? = nil
+        var velocityZ: Double? = nil
+        var pitchDegrees: Double? = nil
+        var rollDegrees: Double? = nil
+        var yawDegrees: Double? = nil
+        var satelliteCount: Int? = nil
+        var flightMode: String? = nil
+        var motorsOn: Bool? = nil
+        var isFlying: Bool? = nil
+        var homeLocationSet: Bool? = nil
+        var homeLatitude: Double? = nil
+        var homeLongitude: Double? = nil
+        var imuPreheating: Bool? = nil
+        var flightTimeSeconds: Int? = nil
+        var imageJPEGBase64: String? = nil
+        var commandID: String? = nil
+        var commandAccepted: Bool? = nil
         var simulated: Bool? = nil
         var message: String? = nil
     }
+}
+
+/// Mac-originated operator actions. The iPhone checks a short-lived pairing
+/// code, timestamp freshness and actual aircraft state before acting.
+struct GroundStationCommand: Codable {
+    enum Action: String, Codable {
+        case gimbalPitch, takePhoto, startRecording, stopRecording
+        case armFlight, disarmFlight, takeoff, land, returnHome
+        case motorsOn, motorsOff
+        case enableSticks, disableSticks, sticks
+    }
+    var version: Int = 1
+    var id: String = UUID().uuidString
+    var timestamp: Date = Date()
+    var pairingCode: String
+    var action: Action
+    var value: Double? = nil
+    var pitch: Double? = nil
+    var roll: Double? = nil
+    var yaw: Double? = nil
+    var vertical: Double? = nil
 }
