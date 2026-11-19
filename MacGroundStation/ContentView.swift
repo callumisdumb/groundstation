@@ -37,7 +37,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 logPanel
-                Text("Experimental ground station. Live flight control must be validated in DJI Simulator and with the physical RC available. The sampled preview is NOT suitable for piloting.")
+                Text("EXPERIMENTAL: flight actions are disabled pending simulator testing, secure transport and physical-controller fallback verification. Sampled video is NOT suitable for piloting.")
                     .foregroundStyle(.orange)
                     .font(.caption)
             }

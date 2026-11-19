@@ -77,3 +77,24 @@ No live flight commands are present. Never assume network loss means the aircraf
 ## Documentation
 
 Read [DJI integration](Documentation/DJIIntegration.md) and [test plan](Documentation/TestingPlan.md) before extending this prototype.
+
+
+## Mac-only controls (development branch)
+
+The Mac application is intended to be the **only operator interface**. The iPhone runs
+as a foreground communications bridge attached to the original Mavic Pro RC by USB-C.
+The user must initially open the bridge and enter the six-digit pairing code on Mac,
+but gimbal/camera/mission/flight operation will be managed from the Mac.
+
+On `feature/dji-v4-readonly`, the UI contains aircraft diagnostics, map, DJI camera
+commands, gimbal pitch controls, and a prototype for flight actions / held virtual sticks.
+**Flight actions and motors are intentionally DISABLED** by default because an
+unencrypted LAN + sampled JPEG video are not suitable for live flight control. They
+must not be enabled simply by changing a build flag without a secure transport and
+controlled hardware/simulator testing. A checked, production pilot must have the physical
+controller and direct visual line of sight.
+
+Camera video is an experimental DJIWidget decoder on iPhone, relaying a JPEG snapshot
+every ~2 seconds to Mac; this is not an FPV piloting feed. DJIWidget may require legacy
+Xcode compatibility work. See
+[Mac-only controls and testing](Documentation/MacControlTesting.md).

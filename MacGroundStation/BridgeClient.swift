@@ -25,13 +25,17 @@ final class BridgeClient: ObservableObject {
     private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
 
     var flightReady: Bool {
-        connected && latestStatus?.payload.aircraftConnected == true &&
+        #if GROUNDSTATION_FLIGHT_TESTED
+        return connected && latestStatus?.payload.aircraftConnected == true &&
         latestStatus?.payload.simulated == false &&
         (latestStatus?.payload.batteryPercent ?? 0) >= 30 &&
         (latestStatus?.payload.satelliteCount ?? 0) >= 8 &&
         latestStatus?.payload.homeLocationSet == true &&
         (lastTelemetryAt.map { Date().timeIntervalSince($0) < 3 } ?? false) &&
         !pairingCode.isEmpty
+        #else
+        return false
+        #endif
     }
 
     func connect(host: String, port: UInt16) {

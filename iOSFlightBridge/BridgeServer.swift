@@ -24,7 +24,7 @@ final class BridgeServer: ObservableObject {
     private var commandBuffer = Data()
     private var seenCommands = Set<String>()
     private var badPairingAttempts = 0
-    private let video = DJIFramePreview()
+    private let video = DJIFramePreview.shared
 
     func start() {
         if !startedDJI {

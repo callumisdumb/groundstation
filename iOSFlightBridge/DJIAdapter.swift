@@ -115,6 +115,16 @@ final class DJIAdapter: NSObject {
             .motorsOn, .motorsOff, .enableSticks, .disableSticks, .sticks
         ].contains(command.action)
 
+        // Flight actuation is intentionally locked until the link is encrypted,
+        // flight controls are hardware-validated, and a safe operating plan exists.
+        // Read-only telemetry and Mac camera/gimbal actions remain available.
+        #if !GROUNDSTATION_FLIGHT_TESTED
+        if flightAction && command.action != .disarmFlight && command.action != .disableSticks {
+            result(command, false, "Flight controls locked: simulator + encrypted transport verification required")
+            return
+        }
+        #endif
+
         if flightAction && Date().timeIntervalSince(lastAircraftStateAt) > 2.0 {
             result(command, false, "Flight telemetry stale; command rejected")
             return
@@ -293,7 +303,7 @@ final class DJIAdapter: NSObject {
         let data = DJIVirtualStickFlightControlData(
             pitch: Float(axes.pitch), roll: Float(axes.roll),
             yaw: Float(axes.yaw), verticalThrottle: Float(axes.vertical))
-        fc.send(data, withCompletion: nil)
+        fc.sendVirtualStickFlightControlData(data, withCompletion: nil)
         #endif
     }
 
@@ -329,7 +339,22 @@ extension DJIAdapter: DJISDKManagerDelegate {
 
     func productDisconnected() {
         disableSticks()
-        refreshConnection()
+        controller = nil
+        lastFlightState = nil
+        lastAircraftStateAt = .distantPast
+        flightArmedUntil = .distantPast
+        publish {
+            $0.aircraftConnected = false
+            $0.controllerConnected = false
+            $0.aircraftModel = nil
+            $0.connectionState = "DJI aircraft/remote disconnected"
+            $0.batteryPercent = nil
+            $0.latitude = nil
+            $0.longitude = nil
+            $0.altitudeMeters = nil
+            $0.speedMetersPerSecond = nil
+            $0.simulated = false
+        }
     }
 
     func componentConnected(withKey key: String?, andIndex index: Int) { refreshConnection() }
