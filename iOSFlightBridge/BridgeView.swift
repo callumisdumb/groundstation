@@ -24,7 +24,8 @@ struct BridgeView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("Status", value: server.running ? "Listening" : "Stopped")
                         LabeledContent("Address", value: server.localAddress ?? "Finding Wi-Fi address…")
-                        LabeledContent("Port", value: "8765")
+                        LabeledContent("Telemetry / commands", value: "8765")
+                        LabeledContent("Live H.264 video", value: "8766")
                         Button(server.running ? "Stop" : "Start") {
                             server.running ? server.stop() : server.start()
                         }
@@ -34,12 +35,12 @@ struct BridgeView: View {
                     Text(server.djiStatus).font(.headline)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Camera video decoder (iPhone)") {
+                GroupBox("DJI camera decoder (relay source)") {
                     DJIFramePreviewSurface()
                         .frame(height: 155)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(alignment: .bottomLeading) {
-                            Text("Preview on Mac uses sampled frames, not flight-quality FPV")
+                            Text("H.264 forwarded continuously to Mac on port 8766")
                                 .font(.system(size: 9))
                                 .padding(6)
                                 .background(.black.opacity(0.7))

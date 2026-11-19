@@ -17,7 +17,6 @@ final class BridgeServer: ObservableObject {
     private var listener: NWListener?
     private var client: NWConnection?
     private var timer: Timer?
-    private var framesTimer: Timer?
     private let djiAdapter = DJIAdapter()
     private var latestDJIStatus: GroundStationMessage.Payload?
     private var startedDJI = false
@@ -25,6 +24,9 @@ final class BridgeServer: ObservableObject {
     private var seenCommands = Set<String>()
     private var badPairingAttempts = 0
     private let video = DJIFramePreview.shared
+    private lazy var videoServer = H264VideoServer(pairingCode: { [weak self] in
+        self?.pairingCode ?? ""
+    })
 
     func start() {
         if !startedDJI {
@@ -45,6 +47,11 @@ final class BridgeServer: ObservableObject {
             #endif
             djiAdapter.start()
         }
+        // A dedicated TCP channel carries encoded H.264. Telemetry stays on 8765.
+        video.onH264Data = { [weak self] bytes in
+            Task { @MainActor in self?.videoServer.pushH264(bytes) }
+        }
+        videoServer.start()
         guard listener == nil else { return }
         do {
             let newListener = try NWListener(using: .tcp, on: 8765)
@@ -73,6 +80,8 @@ final class BridgeServer: ObservableObject {
     }
 
     func stop() {
+        videoServer.stop()
+        video.onH264Data = nil
         endSession()
         listener?.cancel()
         listener = nil
@@ -107,8 +116,6 @@ final class BridgeServer: ObservableObject {
     private func endSession() {
         timer?.invalidate()
         timer = nil
-        framesTimer?.invalidate()
-        framesTimer = nil
         djiAdapter.networkDisconnected()
         client?.cancel()
         client = nil
@@ -122,16 +129,13 @@ final class BridgeServer: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.djiAdapter.refreshConnection()
+                self?.video.start()
                 self?.sendCurrentStatus()
             }
         }
         sendCurrentStatus()
         #if canImport(DJISDK)
         video.start()
-        framesTimer?.invalidate()
-        framesTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sendPreview() }
-        }
         #endif
     }
 
@@ -222,19 +226,6 @@ final class BridgeServer: ObservableObject {
         payload.deviceName = "iPhone"
         payload.connectionState = "bridge-ready"
         send(GroundStationMessage(kind: .hello, payload: payload))
-    }
-
-    private func sendPreview() {
-        guard latestDJIStatus?.aircraftConnected == true else { return }
-        video.captureJPEG { [weak self] jpeg in
-            guard let jpeg, jpeg.count <= 400_000 else { return }
-            Task { @MainActor in
-                var payload = GroundStationMessage.Payload()
-                payload.imageJPEGBase64 = jpeg.base64EncodedString()
-                payload.simulated = false
-                self?.send(GroundStationMessage(kind: .cameraFrame, payload: payload))
-            }
-        }
     }
 
     private func sendResult(id: String, accepted: Bool, detail: String) {

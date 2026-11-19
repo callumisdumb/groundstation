@@ -10,6 +10,9 @@ import DJISDK
 /// JPEG snapshots are for situational awareness only, NOT for real-time piloting.
 /// A production FPV link should use a measured low-latency encoded video path.
 final class DJIFramePreview: NSObject {
+    /// Continuous compressed H.264 bytes from DJI; shared with the Mac video relay.
+    /// Do not convert this stream into JPEG snapshots.
+    var onH264Data: ((Data) -> Void)?
     static let shared = DJIFramePreview()
 
     #if canImport(DJISDK)
@@ -77,6 +80,7 @@ final class DJIFramePreview: NSObject {
 extension DJIFramePreview: DJIVideoFeedListener {
     func videoFeed(_ videoFeed: DJIVideoFeed, didUpdateVideoData videoData: Data) {
         guard videoFeed == feed else { return }
+        onH264Data?(videoData)
         var buffer = videoData
         buffer.withUnsafeMutableBytes { rawBuffer in
             guard let data = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
