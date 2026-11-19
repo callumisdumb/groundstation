@@ -20,6 +20,19 @@ struct FlightCockpitView: View {
     @State private var gimbalPitch = -30.0
     @State private var manualTrackingLabel = "Vehicle / object"
     @State private var actionToConfirm: GroundStationCommand.Action?
+    @State private var liveClearArea = false
+    @State private var livePilotAtRC = false
+    @State private var liveVLOSAndRegulations = false
+    @State private var liveFailsafeReviewed = false
+    @State private var liveConfirmPhrase = ""
+
+    private var liveChecklistReady: Bool {
+        liveClearArea && livePilotAtRC && liveVLOSAndRegulations &&
+        liveFailsafeReviewed &&
+        liveConfirmPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased() == "ENABLE LIVE FLIGHT" &&
+        client.livePreflightReady
+    }
 
     private let line = Color.white.opacity(0.12)
     private let green = Color(red: 0.23, green: 0.89, blue: 0.70)
@@ -55,7 +68,8 @@ struct FlightCockpitView: View {
         }
         .background(console)
         .confirmationDialog(
-            "Confirm DJI simulator action",
+            client.djiSimulatorActive ?
+                "Confirm DJI Simulator command" : "Confirm REAL aircraft command",
             isPresented: Binding(
                 get: { actionToConfirm != nil },
                 set: { if !$0 { actionToConfirm = nil } }),
@@ -63,17 +77,32 @@ struct FlightCockpitView: View {
         ) {
             if let action = actionToConfirm {
                 Button(confirmTitle(action)) {
-                    if action == .land || action == .stopDJISimulator {
+                    if action == .land || action == .returnHome ||
+                       action == .stopDJISimulator || action == .revokeLiveFlight {
                         keyboard.keyboardEnabled = false
                         client.releaseVirtualSticks()
                     }
-                    client.send(action)
+                    if action == .revokeLiveFlight {
+                        client.revokeLiveFlight()
+                    } else {
+                        client.send(action)
+                    }
+                    if action == .authorizeLiveFlight {
+                        // A new authorization must never reuse an old checklist.
+                        liveConfirmPhrase = ""
+                        liveClearArea = false
+                        livePilotAtRC = false
+                        liveVLOSAndRegulations = false
+                        liveFailsafeReviewed = false
+                    }
                     actionToConfirm = nil
                 }
             }
             Button("Cancel", role: .cancel) { actionToConfirm = nil }
         } message: {
-            Text("Only test with propellers physically removed, the DJI remote controller linked, and a clear area. Live-aircraft flight output remains locked.")
+            Text(client.djiSimulatorActive
+                 ? "SIMULATOR ONLY: remove propellers. The physical remote controller must remain linked."
+                 : "REAL AIRCRAFT: motors and propellers may start. Ensure a clear outdoor flight area, legal visual line of sight, and a pilot holding the physical DJI remote controller. Cancel if unsure.")
         }
     }
 
@@ -429,42 +458,81 @@ struct FlightCockpitView: View {
 
     private var flightInspector: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("DJI SIMULATOR", systemImage: "gamecontroller")
+            Label(client.djiSimulatorActive ? "DJI SIMULATOR" : "REAL AIRCRAFT CONTROL",
+                  systemImage: client.djiSimulatorActive ? "gamecontroller" : "airplane")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(green)
-            Text("Test Mac controls against DJI's aircraft simulator. This is not real flight. Remove propellers before powering the drone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            statusRow("Encrypted flight key", client.flightKeyVerified ? "VERIFIED" : "NOT PAIRED")
-            statusRow("DJI Simulator", client.djiSimulatorActive ? "ACTIVE" : "OFF")
-            statusRow("Sticks", client.virtualSticksEnabled ? "ENGAGED" : "RELEASED")
-            statusRow("Flight", telemetry?.isFlying == true ? "AIRBORNE IN SIM" : "ON GROUND")
-            statusRow("Mode", telemetry?.flightControlStatus ?? "—")
+                .foregroundStyle(client.djiSimulatorActive ? green : amber)
+
+            statusRow("Flight link", client.flightKeyVerified ? "ENCRYPTED COMMANDS READY" : "PAIR FLIGHT KEY")
+            statusRow("Aircraft", aircraftLinked ? (telemetry?.aircraftModel ?? "CONNECTED") : "OFFLINE")
+            statusRow("Mode", client.djiSimulatorActive ? "SIMULATOR" :
+                       (client.liveFlightAuthorized ? "LIVE AUTHORIZED" : "LIVE LOCKED"))
+            statusRow("Virtual Sticks", client.virtualSticksEnabled ? "ENGAGED" : "RELEASED")
+            statusRow("Flight", telemetry?.isFlying == true ? "AIRBORNE" : "ON GROUND")
+
             Divider().overlay(line)
+
+            if !client.djiSimulatorActive {
+                liveFlightSection
+                Divider().overlay(line)
+            } else {
+                Text("DJI simulator controls").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(green)
+                Button("Stop Simulator") {
+                    actionToConfirm = .stopDJISimulator
+                }
+                .disabled(telemetry?.isFlying == true)
+                .controlSize(.small)
+                Divider().overlay(line)
+            }
+
+            if !client.liveFlightAuthorized && !client.djiSimulatorActive {
+                Button("Start DJI Simulator instead") {
+                    actionToConfirm = .startDJISimulator
+                }
+                .disabled(!aircraftLinked || !client.flightKeyVerified ||
+                          telemetry?.isFlying == true)
+                .controlSize(.small)
+            }
+            Text("Takeoff / landing")
+                .font(.system(size: 11, weight: .bold))
             HStack {
-                Button("Start Simulator") { actionToConfirm = .startDJISimulator }
-                    .disabled(!aircraftLinked || !client.flightKeyVerified ||
-                              client.djiSimulatorActive || telemetry?.isFlying == true)
-                Button("Stop Simulator") { actionToConfirm = .stopDJISimulator }
-                    .disabled(!client.djiSimulatorActive || telemetry?.isFlying == true)
+                Button("Arm (30s)") {
+                    client.send(.armFlight)
+                }
+                .disabled(!client.flightReady || telemetry?.isFlying == true)
+                Button("Take off") {
+                    actionToConfirm = .takeoff
+                }
+                .disabled(!client.flightReady || !client.flightArmed ||
+                          telemetry?.isFlying == true)
             }
             .controlSize(.small)
+
             HStack {
-                Button("Arm (30s)") { client.send(.armFlight) }
-                    .disabled(!client.flightReady || telemetry?.isFlying == true)
-                Button("Take off") { actionToConfirm = .takeoff }
-                    .disabled(!client.flightReady || !client.flightArmed ||
-                              telemetry?.isFlying == true)
-                Button("Land") { actionToConfirm = .land }
-                    .disabled(!client.flightReady || telemetry?.isFlying != true)
+                Button {
+                    actionToConfirm = .land
+                } label: {
+                    Label("Land", systemImage: "arrow.down")
+                }
+                .disabled(!client.connected || !client.flightKeyVerified ||
+                          !aircraftLinked || telemetry?.isFlying != true)
+                Button {
+                    actionToConfirm = .returnHome
+                } label: {
+                    Label("Return Home", systemImage: "house.fill")
+                }
+                .disabled(!client.connected || !client.flightKeyVerified ||
+                          !aircraftLinked || telemetry?.isFlying != true ||
+                          telemetry?.homeLocationSet != true)
             }
             .controlSize(.small)
+
             Divider().overlay(line)
             Text("KEYBOARD MOVEMENT")
                 .font(.system(size: 10, weight: .bold))
             Toggle("Capture WASD + Space", isOn: $keyboard.keyboardEnabled)
-                .disabled(!client.djiSimulatorActive || !client.flightReady)
+                .disabled(!client.flightReady || !client.virtualSticksEnabled)
             Toggle("Precision mode (X)", isOn: $keyboard.preciseMode)
             Button {
                 client.send(.enableSticks)
@@ -484,19 +552,79 @@ struct FlightCockpitView: View {
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(green)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("WASD move · Q/E yaw · C/Z climb · hold SPACE · X precision · ESC release.")
+            Text("WASD translate · Q/E yaw · C/Z climb · hold SPACE · X precision · ESC to hand off to RC.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
             Divider().overlay(line)
             Text(client.lastControlResult)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(amber)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Real aircraft controls remain locked until supervised hardware validation. Always retain the DJI remote controller.")
+            Text("If the Mac/iPhone link fails, the iPhone stops Virtual Stick input. Always keep the physical remote controller in hand.")
                 .font(.system(size: 10))
                 .foregroundStyle(amber)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .onChange(of: client.connected) { connected in
+            if !connected {
+                liveConfirmPhrase = ""
+                liveClearArea = false
+                livePilotAtRC = false
+                liveVLOSAndRegulations = false
+                liveFailsafeReviewed = false
+            }
+        }
+    }
+
+    private var liveFlightSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("LIVE FLIGHT AUTHORIZATION", systemImage: "shield.lefthalf.filled")
+                    .font(.system(size: 11, weight: .bold))
+                Spacer()
+                Text(client.liveFlightAuthorized ? "APPROVED" : "LOCKED")
+                    .foregroundStyle(client.liveFlightAuthorized ? green : amber)
+                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
+            }
+            Text("This mode commands real motors. Authorization expires after 15 minutes and is revoked on link loss.")
+                .font(.system(size: 10))
+                .foregroundStyle(amber)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if client.liveFlightAuthorized {
+                Button(role: .destructive) {
+                    actionToConfirm = .revokeLiveFlight
+                } label: {
+                    Label("Revoke live controls", systemImage: "lock.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.small)
+            } else {
+                Toggle("Clear outdoor launch / landing area", isOn: $liveClearArea)
+                Toggle("Pilot holding linked DJI remote controller", isOn: $livePilotAtRC)
+                Toggle("Legal visual line of sight; no nearby people", isOn: $liveVLOSAndRegulations)
+                Toggle("RTH height, home point and failsafe checked", isOn: $liveFailsafeReviewed)
+                Text("Type ENABLE LIVE FLIGHT")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                TextField("ENABLE LIVE FLIGHT", text: $liveConfirmPhrase)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    actionToConfirm = .authorizeLiveFlight
+                } label: {
+                    Label("Authorize real aircraft (15m)", systemImage: "checkmark.shield")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(!liveChecklistReady)
+                .controlSize(.small)
+            }
+            if !client.livePreflightReady && !client.liveFlightAuthorized {
+                Text("Preflight telemetry must show: genuine grounded Mavic Pro, 40%+ battery, ≥10 GPS satellites, home point, ready IMU and fresh aircraft data.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -724,7 +852,8 @@ struct FlightCockpitView: View {
                     actionToConfirm = .takeoff
                 }
                 flightButton("LAND", icon: "arrow.down",
-                             enabled: client.flightReady && telemetry?.isFlying == true) {
+                             enabled: client.connected && client.flightKeyVerified &&
+                                      aircraftLinked && telemetry?.isFlying == true) {
                     actionToConfirm = .land
                 }
             }
@@ -732,11 +861,12 @@ struct FlightCockpitView: View {
                 Circle()
                     .fill(client.djiSimulatorActive ? green : amber)
                     .frame(width: 6, height: 6)
-                Text(client.djiSimulatorActive ?
-                     "DJI SIMULATOR" : "LIVE FLIGHT LOCKED")
-                    .foregroundStyle(client.djiSimulatorActive ? green : amber)
+                Text(client.djiSimulatorActive ? "DJI SIMULATOR" :
+                     (client.liveFlightAuthorized ? "LIVE FLIGHT AUTHORIZED" : "LIVE LOCKED"))
+                    .foregroundStyle(client.djiSimulatorActive || client.liveFlightAuthorized ?
+                                     green : amber)
                 Spacer()
-                Button("Simulator / Controls") {
+                Button("Flight Controls") {
                     activeTool = .flight
                     showToolPanel = true
                 }
@@ -746,8 +876,8 @@ struct FlightCockpitView: View {
             }
             .font(.system(size: 10, weight: .bold, design: .monospaced))
             Text(client.virtualSticksEnabled ?
-                 "Sticks engaged · SPACE + WASD" :
-                 "Physical RC retained · flight output gated")
+                 "Mac sticks engaged · SPACE + WASD" :
+                 "Physical DJI RC remains the primary fallback")
                 .font(.system(size: 9))
                 .foregroundStyle(.white.opacity(0.57))
                 .lineLimit(2)
@@ -774,8 +904,13 @@ struct FlightCockpitView: View {
         switch action {
         case .startDJISimulator: return "Start DJI Simulator"
         case .stopDJISimulator: return "Stop DJI Simulator"
-        case .takeoff: return "Confirm simulator takeoff"
-        case .land: return "Confirm simulator landing"
+        case .takeoff: return client.djiSimulatorActive ?
+            "Confirm simulated takeoff" : "CONFIRM REAL TAKEOFF — MOTORS WILL START"
+        case .land: return client.djiSimulatorActive ?
+            "Confirm simulated landing" : "Confirm REAL landing"
+        case .returnHome: return "Confirm Return to Home"
+        case .authorizeLiveFlight: return "Authorize live motor controls"
+        case .revokeLiveFlight: return "Revoke live flight authorization"
         default: return "Confirm command"
         }
     }
