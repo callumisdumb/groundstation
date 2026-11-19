@@ -64,7 +64,7 @@ struct GroundStationCommand: Codable {
         case armFlight, disarmFlight, takeoff, land, returnHome
         case motorsOn, motorsOff
         case enableSticks, disableSticks, sticks
-        case startDJISimulator, stopDJISimulator
+        case startDJISimulator, stopDJISimulator, verifyFlightKey
         case activeTrackPrepare, activeTrackConfirm, activeTrackStop
     }
     var version: Int = 1

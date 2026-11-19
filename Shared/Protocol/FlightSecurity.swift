@@ -103,7 +103,7 @@ enum FlightKeyStore {
 extension GroundStationCommand.Action {
     var requiresEncryptedFlightLink: Bool {
         switch self {
-        case .startDJISimulator, .stopDJISimulator,
+        case .startDJISimulator, .stopDJISimulator, .verifyFlightKey,
              .armFlight, .disarmFlight, .takeoff, .land, .returnHome,
              .motorsOn, .motorsOff, .enableSticks, .disableSticks, .sticks,
              .activeTrackPrepare, .activeTrackConfirm, .activeTrackStop:
