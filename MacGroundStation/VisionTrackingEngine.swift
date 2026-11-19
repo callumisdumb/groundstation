@@ -7,14 +7,14 @@ import Vision
 
 /// Vision-normalised bounding box has a BOTTOM-LEFT origin. DJI ActiveTrack
 /// uses TOP-LEFT; convert when sending a rectangle to the iPhone.
-struct VisionCandidate: Identifiable {
+struct VisionCandidate: Identifiable, @unchecked Sendable {
     var id: UUID = UUID()
     var kind: String
     var confidence: Float
     var bounds: CGRect
 }
 
-struct VisionTrackingOutput {
+struct VisionTrackingOutput: @unchecked Sendable {
     var people: [VisionCandidate]
     var vehicles: [VisionCandidate]
     var targetBounds: CGRect?
@@ -53,9 +53,11 @@ final class VisionTrackingEngine: ObservableObject {
     private let minFrameInterval: TimeInterval = 0.18
 
     init() {
+        // Capture the serial-queue-confined worker while on MainActor.
+        // Never access actor-isolated properties from DispatchQueue callbacks.
+        let worker = self.worker
         workQueue.async { [weak self] in
-            guard let self else { return }
-            let loaded = self.worker.loadVehicleModelIfPresent()
+            let loaded = worker.loadVehicleModelIfPresent()
             Task { @MainActor [weak self] in
                 self?.vehicleModelInstalled = loaded
             }
@@ -72,9 +74,12 @@ final class VisionTrackingEngine: ObservableObject {
         videoDimensions = CGSize(width: CVPixelBufferGetWidth(image),
                                  height: CVPixelBufferGetHeight(image))
 
+        // The immutable frame is retained while analysis happens off-main.
+        // CVPixelBuffer isn't annotated Sendable by CoreVideo.
+        let frame = ReadOnlyPixelBuffer(image)
+        let worker = self.worker
         workQueue.async { [weak self] in
-            guard let self else { return }
-            let result = self.worker.analyse(image, detect: detect)
+            let result = worker.analyse(frame.value, detect: detect)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isProcessing = false
@@ -118,8 +123,9 @@ final class VisionTrackingEngine: ObservableObject {
         selectedConfidence = 1
         selectedLost = false
         status = "\(label) selected — local video tracking"
-        workQueue.async { [weak self] in
-            self?.worker.select(rect)
+        let worker = self.worker
+        workQueue.async {
+            worker.select(rect)
         }
     }
 
@@ -129,8 +135,9 @@ final class VisionTrackingEngine: ObservableObject {
         selectedConfidence = 0
         selectedLost = false
         status = enabled ? "Detecting people" : "Analysis off"
-        workQueue.async { [weak self] in
-            self?.worker.clearSelection()
+        let worker = self.worker
+        workQueue.async {
+            worker.clearSelection()
         }
     }
 
@@ -145,9 +152,18 @@ final class VisionTrackingEngine: ObservableObject {
     }
 }
 
+/// Transfer a read-only, reference-counted CoreVideo frame to the serial
+/// analysis queue. No code in this worker mutates the pixel data.
+private struct ReadOnlyPixelBuffer: @unchecked Sendable {
+    let value: CVPixelBuffer
+    init(_ value: CVPixelBuffer) { self.value = value }
+}
+
 /// Vision requests run on a serial background queue: never use the SwiftUI
 /// main actor to execute model inference.
-private final class VisionAnalysisWorker {
+// Confined to VisionTrackingEngine's single serial workQueue. This type
+// never accesses AppKit/SwiftUI or shared mutable state concurrently.
+private final class VisionAnalysisWorker: @unchecked Sendable {
     private let trackingHandler = VNSequenceRequestHandler()
     private var trackRequest: VNTrackObjectRequest?
     private var coreMLRequest: VNCoreMLRequest?

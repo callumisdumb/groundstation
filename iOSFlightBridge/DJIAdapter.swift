@@ -113,10 +113,10 @@ final class DJIAdapter: NSObject {
         let simActive = actualController?.simulator?.isSimulatorActive == true
         publish {
             $0.djiSimulatorActive = simActive
-            $0.virtualSticksEngaged = sticksEnabled
+            $0.virtualSticksEngaged = self.sticksEnabled
             $0.flightControlStatus = simActive
-                ? (sticksEnabled ? "DJI Simulator · Virtual Stick enabled" : "DJI Simulator · ready")
-                : (sticksEnabled ? "Live Virtual Stick engaged" : "Live flight controls gated")
+                ? (self.sticksEnabled ? "DJI Simulator · Virtual Stick enabled" : "DJI Simulator · ready")
+                : (self.sticksEnabled ? "Live Virtual Stick engaged" : "Live flight controls gated")
         }
         if Date().timeIntervalSince(lastAircraftStateAt) > 4 {
             publish {
@@ -216,7 +216,7 @@ final class DJIAdapter: NSObject {
                 latitude: (-90...90).contains(lat) ? lat : 0,
                 longitude: (-180...180).contains(lon) ? lon : 0)
             simulator.start(withLocation: coordinate, updateFrequency: 20,
-                            GPSSatellitesNumber: 12, withCompletion: { [weak self] error in
+                            gpsSatellitesNumber: 12, withCompletion: { [weak self] error in
                 DispatchQueue.main.async {
                     self?.refreshConnection()
                     self?.result(command, error == nil,
@@ -360,6 +360,9 @@ final class DJIAdapter: NSObject {
             result(command, true, "Virtual Stick mode released to DJI controller")
         case .activeTrackPrepare, .activeTrackConfirm, .activeTrackStop:
             result(command, false, "ActiveTrack command routing error")
+        case .verifyFlightKey:
+            // The bridge validates this before calling into the DJI adapter.
+            result(command, false, "Flight-key verification must be handled by BridgeServer")
         case .sticks:
             guard sticksEnabled, snapshot.isFlying == true else {
                 // Avoid filling the logs with rejected held-button messages.
@@ -524,7 +527,7 @@ extension DJIAdapter: DJIFlightControllerDelegate {
             $0.aircraftModel = DJISDKManager.product()?.model
             $0.simulated = false
             $0.djiSimulatorActive = fc.simulator?.isSimulatorActive == true
-            $0.virtualSticksEngaged = sticksEnabled
+            $0.virtualSticksEngaged = self.sticksEnabled
             $0.altitudeMeters = state.altitude.isFinite ? Double(state.altitude) : nil
             $0.velocityX = Double(state.velocityX)
             $0.velocityY = Double(state.velocityY)
