@@ -1,31 +1,43 @@
-import Foundation
 import Combine
 import Darwin
+import Foundation
 import Network
 
-/// Trusted-LAN development server only: TCP is unauthenticated and unencrypted.
+/// Local-only iPhone bridge. All operator controls originate on the Mac.
+/// Session code is shown on iPhone for pairing; no phone flight UI is provided.
+/// IMPORTANT: this is plain TCP. Never use on untrusted Wi-Fi or port-forward.
 @MainActor
 final class BridgeServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var localAddress: String?
     @Published private(set) var lastEvent = "Waiting"
-    @Published private(set) var djiStatus = "DJI SDK not linked (simulated mode)"
+    @Published private(set) var djiStatus = "DJI SDK not linked (simulator mode)"
+    @Published private(set) var pairingCode = String(Int.random(in: 100_000...999_999))
 
     private var listener: NWListener?
     private var client: NWConnection?
     private var timer: Timer?
+    private var framesTimer: Timer?
     private let djiAdapter = DJIAdapter()
     private var latestDJIStatus: GroundStationMessage.Payload?
     private var startedDJI = false
+    private var commandBuffer = Data()
+    private var seenCommands = Set<String>()
+    private var badPairingAttempts = 0
+    private let video = DJIFramePreview()
 
     func start() {
         if !startedDJI {
             startedDJI = true
             djiAdapter.onUpdate = { [weak self] payload in
                 Task { @MainActor in
-                    guard let self else { return }
-                    self.latestDJIStatus = payload
-                    self.djiStatus = payload.connectionState ?? "DJI status unavailable"
+                    self?.latestDJIStatus = payload
+                    self?.djiStatus = payload.connectionState ?? "DJI status unavailable"
+                }
+            }
+            djiAdapter.onResult = { [weak self] id, accepted, detail in
+                Task { @MainActor in
+                    self?.sendResult(id: id, accepted: accepted, detail: detail)
                 }
             }
             #if canImport(DJISDK)
@@ -33,12 +45,11 @@ final class BridgeServer: ObservableObject {
             #endif
             djiAdapter.start()
         }
-
         guard listener == nil else { return }
         do {
             let newListener = try NWListener(using: .tcp, on: 8765)
-            newListener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in self?.accept(connection) }
+            newListener.newConnectionHandler = { [weak self] conn in
+                Task { @MainActor in self?.accept(conn) }
             }
             newListener.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
@@ -48,7 +59,7 @@ final class BridgeServer: ObservableObject {
                         self?.lastEvent = "Listening on TCP 8765"
                         self?.localAddress = Self.wifiAddress()
                     case .failed(let error):
-                        self?.lastEvent = "Listener error: \(error)"
+                        self?.lastEvent = "Listener failed: \(error)"
                         self?.running = false
                     case .cancelled:
                         self?.running = false
@@ -58,61 +69,151 @@ final class BridgeServer: ObservableObject {
             }
             listener = newListener
             newListener.start(queue: .global(qos: .userInitiated))
-        } catch {
-            lastEvent = "Could not start listener: \(error)"
-        }
+        } catch { lastEvent = "Could not open port: \(error)" }
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
-        client?.cancel()
-        client = nil
+        endSession()
         listener?.cancel()
         listener = nil
         running = false
         lastEvent = "Stopped"
     }
 
-    private func accept(_ connection: NWConnection) {
-        timer?.invalidate()
-        client?.cancel()
-        client = connection
-        connection.stateUpdateHandler = { [weak self] state in
+    private func accept(_ conn: NWConnection) {
+        endSession()
+        client = conn
+        conn.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
-                guard let self, self.client === connection else { return }
+                guard let self, self.client === conn else { return }
                 switch state {
                 case .ready:
                     self.lastEvent = "Mac connected"
                     self.sendHello()
                     self.startStatusStream()
-                    self.monitorClient(connection)
+                    self.receiveNext(from: conn)
                 case .failed(let error):
-                    self.lastEvent = "Client error: \(error)"
-                    self.timer?.invalidate()
+                    self.lastEvent = "Mac connection failed: \(error)"
+                    self.endSession()
                 case .cancelled:
-                    self.timer?.invalidate()
+                    self.endSession()
                 default: break
                 }
             }
         }
-        connection.start(queue: .global(qos: .userInitiated))
+        conn.start(queue: .global(qos: .userInitiated))
     }
 
-    private func monitorClient(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, complete, error in
+    private func endSession() {
+        timer?.invalidate()
+        timer = nil
+        framesTimer?.invalidate()
+        framesTimer = nil
+        djiAdapter.networkDisconnected()
+        client?.cancel()
+        client = nil
+        commandBuffer.removeAll()
+        badPairingAttempts = 0
+        seenCommands.removeAll()
+    }
+
+    private func startStatusStream() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.client === connection else { return }
+                self?.djiAdapter.refreshConnection()
+                self?.sendCurrentStatus()
+            }
+        }
+        sendCurrentStatus()
+        #if canImport(DJISDK)
+        video.start()
+        framesTimer?.invalidate()
+        framesTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sendPreview() }
+        }
+        #endif
+    }
+
+    private func receiveNext(from conn: NWConnection) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] bytes, _, complete, error in
+            Task { @MainActor in
+                guard let self, self.client === conn else { return }
+                if let bytes, !bytes.isEmpty { self.consumeCommands(bytes) }
+                guard self.client === conn else { return }
                 if complete || error != nil {
-                    self.timer?.invalidate()
-                    self.lastEvent = "Mac disconnected"
-                    self.client?.cancel()
-                    self.client = nil
+                    self.lastEvent = "Mac disconnected — controls released"
+                    self.endSession()
                 } else {
-                    self.monitorClient(connection)
+                    self.receiveNext(from: conn)
                 }
             }
         }
+    }
+
+    private func consumeCommands(_ bytes: Data) {
+        commandBuffer.append(bytes)
+        if commandBuffer.count > 24_576 {
+            lastEvent = "Oversized command rejected"
+            endSession()
+            return
+        }
+        while let newline = commandBuffer.firstIndex(of: 0x0A) {
+            let line = Data(commandBuffer.prefix(upTo: newline))
+            commandBuffer.removeSubrange(...newline)
+            do {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let command = try decoder.decode(GroundStationCommand.self, from: line)
+                guard command.version == 1,
+                      abs(Date().timeIntervalSince(command.timestamp)) <= 3,
+                      command.id.count <= 80, !seenCommands.contains(command.id) else {
+                    sendResult(id: command.id, accepted: false,
+                               detail: "Expired, duplicate or unsupported command")
+                    continue
+                }
+                guard command.pairingCode == pairingCode else {
+                    badPairingAttempts += 1
+                    sendResult(id: command.id, accepted: false, detail: "Incorrect pairing code")
+                    if badPairingAttempts >= 5 {
+                        lastEvent = "Too many incorrect pairing attempts"
+                        endSession()
+                    }
+                    continue
+                }
+                seenCommands.insert(command.id)
+                if seenCommands.count > 250 { seenCommands.removeAll() }
+                djiAdapter.handle(command)
+            } catch {
+                lastEvent = "Invalid command JSON: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func sendCurrentStatus() {
+        if let current = latestDJIStatus {
+            send(GroundStationMessage(kind: .aircraftStatus, payload: current))
+            return
+        }
+        #if canImport(DJISDK)
+        var status = GroundStationMessage.Payload()
+        status.connectionState = "Waiting for DJI registration and RC connection"
+        status.aircraftConnected = false
+        status.simulated = false
+        send(GroundStationMessage(kind: .aircraftStatus, payload: status))
+        #else
+        var test = GroundStationMessage.Payload()
+        test.connectionState = "SIMULATED — no aircraft connection"
+        test.aircraftModel = "Original Mavic Pro (simulated)"
+        test.aircraftConnected = false
+        test.batteryPercent = 82
+        test.latitude = 55.95
+        test.longitude = -3.19
+        test.altitudeMeters = 0
+        test.speedMetersPerSecond = 0
+        test.simulated = true
+        send(GroundStationMessage(kind: .aircraftStatus, payload: test))
+        #endif
     }
 
     private func sendHello() {
@@ -120,42 +221,28 @@ final class BridgeServer: ObservableObject {
         payload.appName = "iOSFlightBridge"
         payload.deviceName = "iPhone"
         payload.connectionState = "bridge-ready"
-        payload.simulated = true
         send(GroundStationMessage(kind: .hello, payload: payload))
     }
 
-    private func startStatusStream() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sendCurrentStatus() }
+    private func sendPreview() {
+        guard latestDJIStatus?.aircraftConnected == true else { return }
+        video.captureJPEG { [weak self] jpeg in
+            guard let jpeg, jpeg.count <= 400_000 else { return }
+            Task { @MainActor in
+                var payload = GroundStationMessage.Payload()
+                payload.imageJPEGBase64 = jpeg.base64EncodedString()
+                payload.simulated = false
+                self?.send(GroundStationMessage(kind: .cameraFrame, payload: payload))
+            }
         }
-        sendCurrentStatus()
     }
 
-    private func sendCurrentStatus() {
-        if let latestDJIStatus {
-            send(GroundStationMessage(kind: .aircraftStatus, payload: latestDJIStatus))
-            return
-        }
-
-        #if canImport(DJISDK)
-        var pending = GroundStationMessage.Payload()
-        pending.connectionState = "Waiting for DJI SDK registration…"
-        pending.simulated = false
-        send(GroundStationMessage(kind: .aircraftStatus, payload: pending))
-        #else
-        // DEMONSTRATION VALUES. Never represent these as aircraft data.
-        var simulated = GroundStationMessage.Payload()
-        simulated.connectionState = "SIMULATED — no aircraft connection"
-        simulated.aircraftModel = "Original Mavic Pro (simulated)"
-        simulated.batteryPercent = 82
-        simulated.latitude = 55.95
-        simulated.longitude = -3.19
-        simulated.altitudeMeters = 0
-        simulated.speedMetersPerSecond = 0
-        simulated.simulated = true
-        send(GroundStationMessage(kind: .aircraftStatus, payload: simulated))
-        #endif
+    private func sendResult(id: String, accepted: Bool, detail: String) {
+        var payload = GroundStationMessage.Payload()
+        payload.commandID = id
+        payload.commandAccepted = accepted
+        payload.message = (accepted ? "OK: " : "REJECTED: ") + detail
+        send(GroundStationMessage(kind: .commandResult, payload: payload))
     }
 
     private func send(_ message: GroundStationMessage) {
@@ -170,9 +257,7 @@ final class BridgeServer: ObservableObject {
                     Task { @MainActor in self?.lastEvent = "Send error: \(error)" }
                 }
             })
-        } catch {
-            lastEvent = "Encoding error: \(error)"
-        }
+        } catch { lastEvent = "JSON encoding error: \(error)" }
     }
 
     private static func wifiAddress() -> String? {
@@ -182,14 +267,12 @@ final class BridgeServer: ObservableObject {
         defer { freeifaddrs(ifaddr) }
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let entry = pointer.pointee
-            let name = String(cString: entry.ifa_name)
-            guard name == "en0", let socket = entry.ifa_addr,
+            guard String(cString: entry.ifa_name) == "en0",
+                  let socket = entry.ifa_addr,
                   socket.pointee.sa_family == UInt8(AF_INET) else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            let status = getnameinfo(socket, socklen_t(socket.pointee.sa_len),
-                                     &host, socklen_t(host.count),
-                                     nil, 0, NI_NUMERICHOST)
-            if status == 0 {
+            if getnameinfo(socket, socklen_t(socket.pointee.sa_len),
+                           &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
                 address = String(cString: host)
                 break
             }
