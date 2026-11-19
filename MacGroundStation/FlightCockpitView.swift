@@ -16,6 +16,7 @@ struct FlightCockpitView: View {
 
     @State private var activeTool: CockpitTool = .vision
     @State private var showToolPanel = false
+    @State private var mapFocused = false
     @State private var gimbalPitch = -30.0
     @State private var manualTrackingLabel = "Vehicle / object"
 
@@ -37,7 +38,7 @@ struct FlightCockpitView: View {
     var body: some View {
         GeometryReader { geometry in
             let stripHeight: CGFloat = 170
-            let mapWidth = max(325, geometry.size.width * 0.35)
+            let mapWidth = max(325, geometry.size.width * (mapFocused ? 0.54 : 0.35))
             VStack(spacing: 0) {
                 HStack(spacing: 1) {
                     mapPane
@@ -74,6 +75,21 @@ struct FlightCockpitView: View {
                         .tracking(1)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                     Spacer()
+                    Button {
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            mapFocused.toggle()
+                        }
+                    } label: {
+                        Label(mapFocused ? "CAMERA FOCUS" : "MAP FOCUS",
+                              systemImage: "rectangle.split.2x1")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(green)
+                    .help(mapFocused ? "Restore video-focused split view" :
+                                      "Expand map while keeping camera visible")
+                    Rectangle().fill(.white.opacity(0.20))
+                        .frame(width: 1, height: 13)
                     Text(satellite ? "SATELLITE" : "STANDARD")
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.62))
@@ -99,10 +115,6 @@ struct FlightCockpitView: View {
                         }
                         mapControl("location.north.line", help: "Follow aircraft position") {
                             followAircraft.toggle()
-                        }
-                        mapControl("arrow.triangle.2.circlepath", help: "Reset flight trail") {
-                            // A refresh-friendly map control: retain the real trail.
-                            followAircraft = true
                         }
                     }
                 }
