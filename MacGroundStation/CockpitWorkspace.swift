@@ -332,7 +332,7 @@ struct CockpitWorkspace: View {
                 Spacer()
                 Text("QE yaw")
                 Spacer()
-                Text("ZC height")
+                Text("C up · Z down")
             }
             .font(.system(size: 9))
             .foregroundStyle(GSPalette.muted)

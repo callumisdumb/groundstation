@@ -33,7 +33,7 @@ final class KeyboardPilotController: ObservableObject {
     private var lastAxes = PilotAxes()
 
     /// Tracks only keys used by the cockpit. W/S translation, A/D strafe,
-    /// Q/E yaw, Z/C altitude and SPACE as held-to-move interlock.
+    /// Q/E yaw, C/Z altitude and SPACE as held-to-move interlock.
     private let mapped: Set<String> = ["w", "a", "s", "d", "q", "e", "z", "c", "space"]
 
     func install(client: BridgeClient) {
@@ -116,7 +116,7 @@ final class KeyboardPilotController: ObservableObject {
             forward: component("w", "s", 0.6),
             strafe: component("d", "a", 0.6),
             turn: component("e", "q", 12),
-            climb: component("z", "c", 0.35))
+            climb: component("c", "z", 0.35))
 
         guard deadmanHeld, !axes.isNeutral else {
             if sendingMovement { client?.stopSticks() }
