@@ -246,3 +246,47 @@ open MavicGroundStation.xcworkspace
 Select \`MacGroundStation\` in Xcode and press **Cmd+R**. The iPhone bridge
 does not need reinstalling for this layout-only update. Click **Connect**
 in the upper right, enter your iPhone's IP and the six-digit bridge code.
+
+
+## Explicitly authorized LIVE flight (experimental — physical aircraft)
+
+**The live-flight code is implemented but has NOT been flight-tested by the
+project maintainers. Simulator success does not validate live movement.**
+
+The Mac Virtual Cockpit → **Control** panel supports separate modes:
+- **DJI Simulator** — flight commands affect DJI's flight simulator.
+- **LIVE FLIGHT** — actual Mavic Pro flight controller receives commands.
+
+LIVE mode is **not automatically enabled** when connecting. The Mac pilot must
+connect using the six-digit code and the 256-bit Keychain flight key, verify a
+real, grounded Mavic Pro aircraft link, complete the live preflight checklist
+and type \`ENABLE LIVE FLIGHT\`. The iPhone independently rejects live
+authorization unless DJI reports a linked real Mavic Pro, grounded status,
+no IMU preheat, home point, GPS ≥10 satellites, battery ≥40% and fresh flight
+telemetry. The authorization lasts 15 minutes and is cleared on link loss.
+
+Once authorized, the Mac can:
+- Arm for 30 seconds, confirm **REAL takeoff** via DJI's startTakeoff API
+- Enable Virtual Sticks after the aircraft is airborne, then control using
+  **SPACE+WASD/QE/CZ** at 10 Hz with limited velocities
+- Land or initiate DJI Return-to-Home (RTH) from Mac
+- Release control to the physical RC using ESC or **Release to controller**
+- Revoke the live pilot session and stop accepting new movement commands
+
+The iPhone independently filters commands, validates telemetry freshness,
+maintains its own Virtual Stick watchdog, and sends neutral control before
+disabling Virtual Sticks when control is lost.
+
+**Important:** Never attempt real takeoff with propellers removed. Bench tests
+with propellers removed are strictly for non-takeoff diagnostics and simulator
+testing. Real flight requires a safe outdoor area and a competent operator
+with the physical remote controller ready to override. UK users must comply
+with the CAA Drone Code and current airspace permissions.
+
+This is NOT flight-certified software; do not rely on the streamed Wi-Fi
+video as the sole flight viewpoint. Actual network, signal-loss, battery,
+GPS, obstacle, landing-confirmation and manual-override behavior remain
+hardware validation tasks. The RC→aircraft lost-signal action must be configured
+via DJI GO 4 in advance. **AI autonomous following is still locked**.
+
+Full details: [LIVE flight commissioning](Documentation/LiveFlight.md).

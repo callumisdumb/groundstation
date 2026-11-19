@@ -138,3 +138,15 @@ command results must be checked before trusting any control motion.
 secure transport, control latency, motor/obstacle handling, RC override and
 emergency failsafe behaviour have been tested with competent on-site pilot
 supervision. The Mac control protocol is a prototype, not a certification.
+
+
+## Update — live flight authorization (2026-11-19)
+
+The previous blanket compile-time lock has been replaced by a separate,
+short-lived **LIVE flight authorization** on the iPhone. Simulator testing
+still requires propellers removed. Real takeoff can now be requested only
+from the Mac **Control** panel after explicit operator acknowledgments.
+
+This is an experimental integration and does **not** mean the real aircraft
+path was tested or certified by CI. Read
+[LiveFlight.md](LiveFlight.md) before attempting any real flight.
