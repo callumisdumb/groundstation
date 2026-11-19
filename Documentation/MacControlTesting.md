@@ -83,3 +83,58 @@ If nothing appears:
 This code hasn't been built on the operator's local Mac/iPhone combination. If Xcode
 reports a type error from legacy DJI SDK, capture the exact filename and line to
 align Swift imported names with your installed 4.16.2 headers.
+
+
+## iPhone screen-awake mode
+
+The iOS Flight Bridge app sets \`UIApplication.shared.isIdleTimerDisabled = true\`
+while its SwiftUI scene is in the active foreground. The screen stays awake
+without relying on the iPhone Auto-Lock setting.
+
+Normal iOS Auto-Lock is restored if the app becomes inactive/backgrounded
+or its main view disappears. The power button will still lock the phone,
+and iOS can still suspend a backgrounded app. Keep the iPhone connected to
+external power if running for an extended time.
+
+## DJI Simulator and encrypted Mac keyboard testing
+
+This development branch has a new *separate* flight key shared once from
+the iPhone bridge to the Mac. The iPhone generates a random 256-bit secret
+and stores it in Keychain. In the iPhone bridge, use **Copy flight key**,
+then paste the value into the Mac **Connect → Encrypted flight control**
+section and click **Save & verify**.
+
+Camera, telemetry and H.264 video networking are unchanged. The flight
+command link uses AES-GCM packets and an authenticated 256-bit secret over
+the local network. Do not port-forward this prototype or assume the overall
+system is suitable for live aviation operations.
+
+**Simulator test procedure:**
+
+1. Remove the Mavic Pro's propellers; link controller + aircraft.
+2. Install and run the updated iPhone bridge and keep it open (screen stays awake).
+3. Start the Mac GroundStation app, connect to iPhone IP on port 8765 and
+   enter the six-digit pairing code.
+4. In the Mac connection popover, paste the iPhone's flight key, save and verify it.
+5. Open **Virtual Cockpit → Control** from the video tool rail or
+   **Simulator / Controls** from the bottom deck.
+6. Click **Start Simulator** and confirm; wait for DJI simulator state.
+7. Click **Arm (30s)** and **Take off** within the confirmation window.
+8. Click **Enable DJI Virtual Sticks**, then enable **Capture WASD + Space**.
+9. Hold SPACE with W/A/S/D, Q/E and C/Z to move the **DJI simulator**.
+   X toggles precision mode. Releasing SPACE stops moving; ESC releases
+   Virtual Stick authority back to the physical RC.
+10. Land in the simulator, then stop the DJI simulator.
+
+DJI documents Virtual Stick control-data frequency 5–25 Hz. The Mac emits
+bounded control data at 10 Hz while enabled, including neutral commands
+when SPACE is released; the iPhone also enforces a 0.8-second watchdog.
+
+The original Mavic Pro's SDK reports flight-controller simulator state
+separately from UI simulated telemetry. Simulator output and direct flight
+command results must be checked before trusting any control motion.
+
+**Live-aircraft flight output and autonomous follow remain locked** until
+secure transport, control latency, motor/obstacle handling, RC override and
+emergency failsafe behaviour have been tested with competent on-site pilot
+supervision. The Mac control protocol is a prototype, not a certification.
