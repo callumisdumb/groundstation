@@ -187,7 +187,7 @@ private final class VisionAnalysisWorker {
         if let request = trackRequest {
             do {
                 try trackingHandler.perform([request], on: image)
-                if let found = request.results?.first,
+                if let found = request.results?.first as? VNDetectedObjectObservation,
                    found.confidence >= 0.32,
                    found.boundingBox.width >= 0.015,
                    found.boundingBox.height >= 0.015 {
