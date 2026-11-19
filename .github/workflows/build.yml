@@ -23,6 +23,17 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO build
+      - name: Verify optional Apple Core ML object detection model bundles
+        run: |
+          bash scripts/install_vehicle_detector.sh
+          xcodegen generate
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme MacGroundStation \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/groundstation-ai" \
+            CODE_SIGNING_ALLOWED=NO build
+          find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
       - name: Build iPhone bridge in simulator-only mode
         run: |
           xcodebuild -project MavicGroundStation.xcodeproj \
