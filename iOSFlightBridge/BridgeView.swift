@@ -8,7 +8,7 @@ struct BridgeView: View {
             Image(systemName: "antenna.radiowaves.left.and.right")
                 .font(.system(size: 42))
             Text("Mavic Flight Bridge").font(.largeTitle.bold())
-            Text("Milestone A • local network prototype")
+            Text("Milestone B • read-only DJI SDK integration")
                 .foregroundStyle(.secondary)
 
             GroupBox("Network server") {
@@ -23,10 +23,10 @@ struct BridgeView: View {
                 .padding(.vertical, 5)
             }
 
-            GroupBox("DJI connection") {
+            GroupBox("DJI SDK") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("DJI SDK not connected").font(.headline)
-                    Text("The status stream is simulated. Next step: validate DJI Mobile SDK v4 on your Mavic Pro and replace the simulator with read-only aircraft telemetry.")
+                    Text(server.djiStatus).font(.headline)
+                    Text("Read-only telemetry. No aircraft flight commands are implemented.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

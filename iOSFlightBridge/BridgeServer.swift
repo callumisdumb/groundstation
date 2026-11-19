@@ -3,18 +3,37 @@ import Combine
 import Darwin
 import Network
 
-/// Local, unauthenticated prototype listener. Never expose this port to the internet.
+/// Trusted-LAN development server only: TCP is unauthenticated and unencrypted.
 @MainActor
 final class BridgeServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var localAddress: String?
     @Published private(set) var lastEvent = "Waiting"
+    @Published private(set) var djiStatus = "DJI SDK not linked (simulated mode)"
 
     private var listener: NWListener?
     private var client: NWConnection?
     private var timer: Timer?
+    private let djiAdapter = DJIAdapter()
+    private var latestDJIStatus: GroundStationMessage.Payload?
+    private var startedDJI = false
 
     func start() {
+        if !startedDJI {
+            startedDJI = true
+            djiAdapter.onUpdate = { [weak self] payload in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.latestDJIStatus = payload
+                    self.djiStatus = payload.connectionState ?? "DJI status unavailable"
+                }
+            }
+            #if canImport(DJISDK)
+            djiStatus = "DJI SDK loaded: registering…"
+            #endif
+            djiAdapter.start()
+        }
+
         guard listener == nil else { return }
         do {
             let newListener = try NWListener(using: .tcp, on: 8765)
@@ -81,10 +100,10 @@ final class BridgeServer: ObservableObject {
     }
 
     private func monitorClient(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, done, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, complete, error in
             Task { @MainActor in
                 guard let self, self.client === connection else { return }
-                if done || error != nil {
+                if complete || error != nil {
                     self.timer?.invalidate()
                     self.lastEvent = "Mac disconnected"
                     self.client?.cancel()
@@ -108,23 +127,35 @@ final class BridgeServer: ObservableObject {
     private func startStatusStream() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sendSimulatedStatus() }
+            Task { @MainActor in self?.sendCurrentStatus() }
         }
-        sendSimulatedStatus()
+        sendCurrentStatus()
     }
 
-    private func sendSimulatedStatus() {
-        // DEMONSTRATION VALUES, not live readings.
-        var payload = GroundStationMessage.Payload()
-        payload.connectionState = "SIMULATED — no aircraft connection"
-        payload.aircraftModel = "Original Mavic Pro (simulated)"
-        payload.batteryPercent = 82
-        payload.latitude = 55.95
-        payload.longitude = -3.19
-        payload.altitudeMeters = 0
-        payload.speedMetersPerSecond = 0
-        payload.simulated = true
-        send(GroundStationMessage(kind: .aircraftStatus, payload: payload))
+    private func sendCurrentStatus() {
+        if let latestDJIStatus {
+            send(GroundStationMessage(kind: .aircraftStatus, payload: latestDJIStatus))
+            return
+        }
+
+        #if canImport(DJISDK)
+        var pending = GroundStationMessage.Payload()
+        pending.connectionState = "Waiting for DJI SDK registration…"
+        pending.simulated = false
+        send(GroundStationMessage(kind: .aircraftStatus, payload: pending))
+        #else
+        // DEMONSTRATION VALUES. Never represent these as aircraft data.
+        var simulated = GroundStationMessage.Payload()
+        simulated.connectionState = "SIMULATED — no aircraft connection"
+        simulated.aircraftModel = "Original Mavic Pro (simulated)"
+        simulated.batteryPercent = 82
+        simulated.latitude = 55.95
+        simulated.longitude = -3.19
+        simulated.altitudeMeters = 0
+        simulated.speedMetersPerSecond = 0
+        simulated.simulated = true
+        send(GroundStationMessage(kind: .aircraftStatus, payload: simulated))
+        #endif
     }
 
     private func send(_ message: GroundStationMessage) {
