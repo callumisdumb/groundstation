@@ -10,7 +10,7 @@ and video is not uploaded for AI inference.
 - Optional Apple Core ML **vehicle classification** using YOLOv3 Tiny
 - Click a detection box to select it
 - Drag a rectangle over a person, vehicle or other object to track it
-- Vision \`VNTrackObjectRequest\` follows the selected box through frames
+- Vision `VNTrackObjectRequest` follows the selected box through frames
 - Person/vehicle tracking is **video-only**, not drone movement
 
 The optional Core ML model is excluded from Git because it is a third-party
@@ -23,18 +23,18 @@ https://developer.apple.com/machine-learning/models/
 
 From the root of the GroundStation repository:
 
-\`\`\`bash
+```bash
 bash scripts/install_vehicle_detector.sh
 xcodegen generate
 pod install
 open MavicGroundStation.xcworkspace
-\`\`\`
+```
 
 The installer downloads Apple's official
-\`YOLOv3TinyInt8LUT.mlmodel\` into
-\`MacGroundStation/Models/GroundStationDetector.mlmodel\`.
+`YOLOv3TinyInt8LUT.mlmodel` into
+`MacGroundStation/Models/GroundStationDetector.mlmodel`.
 XcodeGen adds the file to the Mac app target and Xcode compiles it to
-\`GroundStationDetector.mlmodelc\`. The Vision worker loads that resource
+`GroundStationDetector.mlmodelc`. The Vision worker loads that resource
 from the Mac app bundle.
 
 It detects COCO classes such as car, bus, truck, motorcycle and bicycle.
@@ -65,12 +65,12 @@ Sources:
 - https://developer.dji.com/api-reference/ios-api/Components/Missions/DJIActiveTrackMissionOperator.html
 
 The custom Mac bridge protocol now has:
-- \`activeTrackPrepare\`: provide a normalised selected subject rectangle
-- \`activeTrackConfirm\`: separately approve DJI aircraft motion
-- \`activeTrackStop\`: request immediate DJI ActiveTrack mission stop
+- `activeTrackPrepare`: provide a normalised selected subject rectangle
+- `activeTrackConfirm`: separately approve DJI aircraft motion
+- `activeTrackStop`: request immediate DJI ActiveTrack mission stop
 - Status feedback for selected target, mission state, motion and errors
 
-The iPhone contains a \`DJIActiveTrackCoordinator\` that follows DJI's two-stage
+The iPhone contains a `DJIActiveTrackCoordinator` that follows DJI's two-stage
 native ActiveTrack model: prepare target for tracking while hovering, **then**
 confirm following/steering. When the Mac Wi-Fi link closes, it requests a
 stop from the iPhone side. The existing physical DJI RC must remain the
@@ -78,7 +78,7 @@ emergency operator override.
 
 **Live autonomous flight is not enabled.**
 The project deliberately does not define
-\`GROUNDSTATION_ACTIVE_TRACK_TESTED\` or \`GROUNDSTATION_FLIGHT_TESTED\`.
+`GROUNDSTATION_ACTIVE_TRACK_TESTED` or `GROUNDSTATION_FLIGHT_TESTED`.
 Even though native ActiveTrack exists, activation of aircraft steering
 requires several independent checks:
 - secure authenticated Mac↔iPhone command transport (the current TCP

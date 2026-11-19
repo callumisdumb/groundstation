@@ -166,3 +166,40 @@ open MavicGroundStation.xcworkspace
 \`\`\`
 
 Build both \`MacGroundStation\` and \`iOSFlightBridge\` on the Mac and iPhone.
+
+
+## AI person and vehicle tracking (native Mac)
+
+GroundStation analyses decoded H.264 camera frames **locally** using Apple Vision.
+Enable **AI Tracking** in the Virtual Cockpit inspector, click a detected
+person, or draw a rectangle around any vehicle/object to track it.
+Bounding boxes, confidence and lost-target indicators appear on the live feed.
+
+Person detection works without extra downloads. For automatic car, bus, truck,
+motorbike and bicycle recognition, install Apple's optional Core ML YOLOv3 Tiny
+model on your Mac (source: Apple ML Models):
+
+```bash
+bash scripts/install_vehicle_detector.sh
+xcodegen generate
+pod install
+open MavicGroundStation.xcworkspace
+```
+
+This downloads the 8-bit model directly from Apple's public model repository
+into a **gitignored** local file. Build the Mac scheme again; the inspector
+will indicate whether the detector was successfully loaded.
+See [AI Tracking Setup](Documentation/AITracking.md).
+
+The native DJI Mavic Pro **ActiveTrack** API offers a separate two-stage
+subject-selection → confirmation → autonomous following mechanism.
+The bridge now includes command and status scaffolding for this SDK flow.
+**Actual autonomous aircraft following and steering are deliberately locked
+by default** until the network transport, physical-controller failsafe and
+subject-loss procedures have been verified. A local green AI tracking box
+does not mean the aircraft is following that subject.
+
+GroundStation's UI is entirely **native SwiftUI/AppKit/MapKit**, with no
+Tailwind, web view or browser-dependent styling. The expanded live camera
+mode and material-based panels are influenced by the workspace patterns
+found in DJI FlightHub 2, but independently designed and branded.
