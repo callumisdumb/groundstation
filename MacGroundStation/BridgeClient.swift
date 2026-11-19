@@ -25,6 +25,8 @@ final class BridgeClient: ObservableObject {
     private var connection: NWConnection?
     private var receiveBuffer = Data()
     private var pendingActions: [String: GroundStationCommand.Action] = [:]
+    @Published private(set) var flightArmExpires = Date.distantPast
+    var flightArmed: Bool { Date() < flightArmExpires }
     private var lastStatusLog = Date.distantPast
     private var sticksTimer: Timer?
     private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
@@ -116,6 +118,7 @@ final class BridgeClient: ObservableObject {
         connected = false
         virtualSticksEnabled = false
         flightKeyVerified = false
+        flightArmExpires = .distantPast
         pendingActions.removeAll()
         latestStatus = nil
         latestFrame = nil
@@ -190,6 +193,12 @@ final class BridgeClient: ObservableObject {
                                 startStickTimerIfNeeded()
                                 emitSticks()
                             }
+                        }
+                        if action == .armFlight && message.payload.commandAccepted == true {
+                            flightArmExpires = Date().addingTimeInterval(30)
+                        }
+                        if action == .takeoff || action == .disarmFlight {
+                            flightArmExpires = .distantPast
                         }
                         if action == .disableSticks || action == .disarmFlight {
                             virtualSticksEnabled = false
