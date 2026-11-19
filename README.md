@@ -72,7 +72,7 @@ The root `Podfile` is a **future integration aid**, not required for the initial
 
 ## Safety
 
-No live flight commands are present. Never assume network loss means the aircraft has stopped. Keep DJI's physical controller and built-in failsafes available, and comply with applicable [UK CAA drone rules](https://www.caa.co.uk/drones/) including visual-line-of-sight obligations.
+Live-flight commands are now available only through an explicit, short-lived LIVE authorization. These commands have not been validated in actual flight. Never assume network loss means the aircraft has stopped. Keep DJI's physical controller and built-in failsafes available, and comply with applicable [UK CAA drone rules](https://www.caa.co.uk/drones/) including visual-line-of-sight obligations.
 
 ## Documentation
 
@@ -88,11 +88,7 @@ but gimbal/camera/mission/flight operation will be managed from the Mac.
 
 On `feature/dji-v4-readonly`, the UI contains aircraft diagnostics, map, DJI camera
 commands, gimbal pitch controls, and a prototype for flight actions / held virtual sticks.
-**Flight actions and motors are intentionally DISABLED** by default because an
-unencrypted LAN + unvalidated H.264 network video are not suitable for live flight control. They
-must not be enabled simply by changing a build flag without a secure transport and
-controlled hardware/simulator testing. A checked, production pilot must have the physical
-controller and direct visual line of sight.
+**Manual LIVE flight now requires independent authorization** on Mac and fresh DJI preflight checks on iPhone. Real-aircraft operation is still an unverified hardware test; keep the physical controller and visual line of sight.
 
 Camera video now has a **continuous H.264** path: the iPhone forwards DJI's compressed
 primary camera feed over a separate paired TCP port **8766**; the Mac parses and
@@ -148,13 +144,7 @@ is **disabled**. Unlike DJI FlightHub 2, we require holding SPACE as a dead-man
 interlock for this custom application's eventual control system. Space is *not*
 a takeoff, land or emergency-stop button.
 
-**Current safety lock:** Flight commands are disabled via the intentionally
-unset \`GROUNDSTATION_FLIGHT_TESTED\` compile condition. They must not be
-unlocked on the strength of working UI or camera alone. Requirements include
-secure authenticated transport, end-to-end latency tests, DJI simulator testing,
-flight-controller fallback and tests supervised with the original physical RC.
-The continuous video feed also needs measured control-to-photon latency.
-Please see [Virtual Cockpit Guide](Documentation/VirtualCockpit.md).
+**Current safety condition:** manual real flight is gated by the LIVE authorization checklist, fresh aircraft telemetry and separate takeoff confirmation. Autonomous person/vehicle following remains disabled. See [LIVE flight guide](Documentation/LiveFlight.md).
 
 ### Upgrade (existing branch, no branch switch)
 
@@ -229,8 +219,7 @@ This is an independently coded **native SwiftUI/AppKit/MapKit** interface,
 not a DJI FlightHub 2 frontend, nor a Tailwind CSS implementation. The
 original Mavic Pro is not officially compatible with FlightHub 2.
 
-No changes were made to the iPhone SDK bridge or motor/flight safety lock
-in this UI-only iteration.
+That earlier UI-only iteration changed no flight logic. A later update added the separately authorized experimental LIVE flight mode.
 
 ### Update the Mac UI only
 
