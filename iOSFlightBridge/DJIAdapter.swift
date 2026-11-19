@@ -98,6 +98,9 @@ final class DJIAdapter: NSObject {
                 $0.imuPreheating = nil
                 $0.flightTimeSeconds = nil
                 $0.simulated = false
+                $0.djiSimulatorActive = false
+                $0.virtualSticksEngaged = false
+                $0.flightControlStatus = "Controller-only / not available"
             }
             return
         }
@@ -106,6 +109,14 @@ final class DJIAdapter: NSObject {
             controller = actualController
             actualController?.delegate = self
             subscribeToBattery()
+        }
+        let simActive = actualController?.simulator?.isSimulatorActive == true
+        publish {
+            $0.djiSimulatorActive = simActive
+            $0.virtualSticksEngaged = sticksEnabled
+            $0.flightControlStatus = simActive
+                ? (sticksEnabled ? "DJI Simulator · Virtual Stick enabled" : "DJI Simulator · ready")
+                : (sticksEnabled ? "Live Virtual Stick engaged" : "Live flight controls gated")
         }
         if Date().timeIntervalSince(lastAircraftStateAt) > 4 {
             publish {
@@ -164,6 +175,7 @@ final class DJIAdapter: NSObject {
             result(command, false, "Aircraft not linked. Check controller ↔ Mavic connection.")
             return
         }
+        let simulatorOn = fc.simulator?.isSimulatorActive == true
         let flightAction: Bool = [
             .armFlight, .disarmFlight, .takeoff, .land, .returnHome,
             .motorsOn, .motorsOff, .enableSticks, .disableSticks, .sticks
@@ -173,7 +185,8 @@ final class DJIAdapter: NSObject {
         // flight controls are hardware-validated, and a safe operating plan exists.
         // Read-only telemetry and Mac camera/gimbal actions remain available.
         #if !GROUNDSTATION_FLIGHT_TESTED
-        if flightAction && command.action != .disarmFlight && command.action != .disableSticks {
+        if flightAction && !simulatorOn &&
+           command.action != .disarmFlight && command.action != .disableSticks {
             result(command, false, "Flight controls locked: simulator + encrypted transport verification required")
             return
         }
@@ -189,6 +202,41 @@ final class DJIAdapter: NSObject {
         }
 
         switch command.action {
+        case .startDJISimulator:
+            guard let simulator = fc.simulator, !simulator.isSimulatorActive,
+                  snapshot.isFlying != true, snapshot.motorsOn != true else {
+                result(command, false, "DJI simulator unavailable or aircraft is not safely grounded")
+                return
+            }
+            // DJI's official Mavic Pro simulator supports a synthetic start
+            // position. A missing GPS fix is not treated as a real location.
+            let lat = snapshot.latitude ?? 0
+            let lon = snapshot.longitude ?? 0
+            let coordinate = CLLocationCoordinate2D(
+                latitude: (-90...90).contains(lat) ? lat : 0,
+                longitude: (-180...180).contains(lon) ? lon : 0)
+            simulator.start(withLocation: coordinate, updateFrequency: 20,
+                            GPSSatellitesNumber: 12, withCompletion: { [weak self] error in
+                DispatchQueue.main.async {
+                    self?.refreshConnection()
+                    self?.result(command, error == nil,
+                                 error?.localizedDescription ?? "DJI simulator started; propellers must remain removed")
+                }
+            })
+        case .stopDJISimulator:
+            guard let simulator = fc.simulator, simulator.isSimulatorActive,
+                  snapshot.isFlying != true else {
+                result(command, false, "Land in the DJI simulator before stopping it")
+                return
+            }
+            disableSticks()
+            simulator.stop(completion: { [weak self] error in
+                DispatchQueue.main.async {
+                    self?.refreshConnection()
+                    self?.result(command, error == nil,
+                                 error?.localizedDescription ?? "DJI simulator stopped")
+                }
+            })
         case .gimbalPitch:
             guard snapshot.activeTrackMovementEnabled != true else {
                 result(command, false, "DJI ActiveTrack owns the gimbal during following")
@@ -232,10 +280,10 @@ final class DJIAdapter: NSObject {
 
         case .armFlight:
             guard snapshot.isFlying == false,
-                  (snapshot.batteryPercent ?? 0) >= 30,
-                  (snapshot.satelliteCount ?? 0) >= 8,
-                  snapshot.homeLocationSet == true,
-                  snapshot.imuPreheating == false else {
+                  (simulatorOn || ((snapshot.batteryPercent ?? 0) >= 30 &&
+                       (snapshot.satelliteCount ?? 0) >= 8 &&
+                       snapshot.homeLocationSet == true &&
+                       snapshot.imuPreheating == false)) else {
                 result(command, false, "Preflight failed: grounded aircraft, battery ≥30%, GPS ≥8, home point and ready IMU required")
                 return
             }
@@ -281,7 +329,7 @@ final class DJIAdapter: NSObject {
             fc.turnOffMotors(completion: completion)
         case .enableSticks:
             guard snapshot.isFlying == true,
-                  (snapshot.batteryPercent ?? 0) >= 20 else {
+                  (simulatorOn || (snapshot.batteryPercent ?? 0) >= 20) else {
                 result(command, false, "Virtual Sticks require active flight and usable battery")
                 return
             }
@@ -290,12 +338,22 @@ final class DJIAdapter: NSObject {
             fc.yawControlMode = .angularVelocity
             fc.verticalControlMode = .velocity
             fc.setVirtualStickModeEnabled(true, withCompletion: { [weak self] error in
-                if error == nil {
-                    self?.sticksEnabled = true
-                    self?.lastSticksAt = Date()
-                    self?.startStickWatchdog()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if error == nil {
+                        self.sticksEnabled = true
+                        self.lastSticksAt = Date()
+                        self.lastAxes = (0, 0, 0, 0)
+                        self.startStickWatchdog()
+                        self.publish {
+                            $0.virtualSticksEngaged = true
+                            $0.flightControlStatus = simulatorOn ?
+                                "DJI simulator receiving Mac keyboard commands" :
+                                "Live Virtual Stick enabled — physical RC available"
+                        }
+                    }
+                    completion(error)
                 }
-                completion(error)
             })
         case .disableSticks:
             disableSticks()
@@ -351,10 +409,18 @@ final class DJIAdapter: NSObject {
 
     private func stickTick() {
         #if canImport(DJISDK)
-        guard sticksEnabled, let fc = controller, fc.isConnected else {
+        guard sticksEnabled, let fc = controller, fc.isConnected,
+              snapshot.isFlying == true,
+              Date().timeIntervalSince(lastAircraftStateAt) < 1.6 else {
             disableSticks()
             return
         }
+        #if !GROUNDSTATION_FLIGHT_TESTED
+        guard fc.simulator?.isSimulatorActive == true else {
+            disableSticks()
+            return
+        }
+        #endif
         let age = Date().timeIntervalSince(lastSticksAt)
         if age > 0.8 {
             disableSticks()
@@ -376,6 +442,10 @@ final class DJIAdapter: NSObject {
         sticksEnabled = false
         lastAxes = (0, 0, 0, 0)
         controller?.setVirtualStickModeEnabled(false, withCompletion: nil)
+        publish {
+            $0.virtualSticksEngaged = false
+            $0.flightControlStatus = "Virtual Stick released · physical RC in control"
+        }
         #endif
     }
 }
@@ -416,6 +486,8 @@ extension DJIAdapter: DJISDKManagerDelegate {
             $0.altitudeMeters = nil
             $0.speedMetersPerSecond = nil
             $0.simulated = false
+            $0.djiSimulatorActive = false
+            $0.virtualSticksEngaged = false
         }
     }
 
@@ -451,6 +523,8 @@ extension DJIAdapter: DJIFlightControllerDelegate {
             $0.connectionState = "DJI aircraft linked (real telemetry)"
             $0.aircraftModel = DJISDKManager.product()?.model
             $0.simulated = false
+            $0.djiSimulatorActive = fc.simulator?.isSimulatorActive == true
+            $0.virtualSticksEngaged = sticksEnabled
             $0.altitudeMeters = state.altitude.isFinite ? Double(state.altitude) : nil
             $0.velocityX = Double(state.velocityX)
             $0.velocityY = Double(state.velocityY)
