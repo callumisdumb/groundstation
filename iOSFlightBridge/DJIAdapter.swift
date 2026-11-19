@@ -29,6 +29,9 @@ final class DJIAdapter: NSObject {
     private var snapshot = GroundStationMessage.Payload()
     private var lastAircraftStateAt = Date.distantPast
     private var flightArmedUntil = Date.distantPast
+    // Live-flight authority is RAM-only, never persisted across disconnects.
+    private var liveFlightAuthorizedUntil = Date.distantPast
+    private var liveFlightAuthorized: Bool { Date() < liveFlightAuthorizedUntil }
     private var lastSticksAt = Date.distantPast
     private var stickTimer: Timer?
     private var sticksEnabled = false
@@ -66,6 +69,7 @@ final class DJIAdapter: NSObject {
         let hasAircraft = !model.lowercased().contains("only remotecontroller") &&
             actualController?.isConnected == true
         if !hasAircraft {
+            liveFlightAuthorizedUntil = .distantPast
             activeTrack.lostMacConnection()
             if sticksEnabled { disableSticks() }
             controller = nil
@@ -101,6 +105,7 @@ final class DJIAdapter: NSObject {
                 $0.djiSimulatorActive = false
                 $0.virtualSticksEngaged = false
                 $0.flightControlStatus = "Controller-only / not available"
+                $0.liveFlightAuthorized = false
             }
             return
         }
@@ -111,12 +116,26 @@ final class DJIAdapter: NSObject {
             subscribeToBattery()
         }
         let simActive = actualController?.simulator?.isSimulatorActive == true
+        if !simActive && liveFlightAuthorized {
+            // Authorization is not allowed to survive a lost/unsafe
+            // flight-controller state. Revoke without issuing aircraft motions.
+            if Date().timeIntervalSince(lastAircraftStateAt) > 2.0 ||
+               (snapshot.batteryPercent ?? 0) < 20 ||
+               snapshot.imuPreheating == true {
+                liveFlightAuthorizedUntil = .distantPast
+                flightArmedUntil = .distantPast
+                disableSticks()
+            }
+        }
         publish {
             $0.djiSimulatorActive = simActive
             $0.virtualSticksEngaged = self.sticksEnabled
+            $0.liveFlightAuthorized = !simActive && self.liveFlightAuthorized
             $0.flightControlStatus = simActive
                 ? (self.sticksEnabled ? "DJI Simulator · Virtual Stick enabled" : "DJI Simulator · ready")
-                : (self.sticksEnabled ? "Live Virtual Stick engaged" : "Live flight controls gated")
+                : (self.liveFlightAuthorized
+                   ? (self.sticksEnabled ? "LIVE · Mac Virtual Stick enabled" : "LIVE · Mac pilot authorized")
+                   : "LIVE · requires preflight authorization")
         }
         if Date().timeIntervalSince(lastAircraftStateAt) > 4 {
             publish {
@@ -181,19 +200,20 @@ final class DJIAdapter: NSObject {
             .motorsOn, .motorsOff, .enableSticks, .disableSticks, .sticks
         ].contains(command.action)
 
-        // Flight actuation is intentionally locked until the link is encrypted,
-        // flight controls are hardware-validated, and a safe operating plan exists.
-        // Read-only telemetry and Mac camera/gimbal actions remain available.
-        #if !GROUNDSTATION_FLIGHT_TESTED
-        if flightAction && !simulatorOn &&
-           command.action != .disarmFlight && command.action != .disableSticks {
-            result(command, false, "Flight controls locked: simulator + encrypted transport verification required")
+        let emergencyAction = [.land, .returnHome, .disableSticks, .disarmFlight]
+            .contains(command.action)
+        // A live session requires a separate operator authorization. Emergency
+        // stop/landing/RTH commands must remain available if authorization
+        // expires while airborne, so they are not blocked by this gate.
+        if !simulatorOn && flightAction && !emergencyAction &&
+           !liveFlightAuthorized {
+            result(command, false,
+                   "Live flight not authorized. Complete preflight and approve from Mac.")
             return
         }
-        #endif
-
-        if flightAction && Date().timeIntervalSince(lastAircraftStateAt) > 2.0 {
-            result(command, false, "Flight telemetry stale; command rejected")
+        if flightAction && !emergencyAction &&
+           Date().timeIntervalSince(lastAircraftStateAt) > 1.5 {
+            result(command, false, "Flight telemetry stale; movement rejected")
             return
         }
         let completion: (Error?) -> Void = { [weak self] error in
@@ -202,8 +222,39 @@ final class DJIAdapter: NSObject {
         }
 
         switch command.action {
+        case .authorizeLiveFlight:
+            guard !simulatorOn, !liveFlightAuthorized,
+                  snapshot.controllerConnected == true,
+                  snapshot.aircraftModel?.lowercased().contains("mavic pro") == true,
+                  snapshot.isFlying == false, snapshot.motorsOn == false,
+                  snapshot.imuPreheating == false,
+                  (snapshot.batteryPercent ?? 0) >= 40,
+                  (snapshot.satelliteCount ?? 0) >= 10,
+                  snapshot.homeLocationSet == true,
+                  snapshot.latitude != nil, snapshot.longitude != nil,
+                  Date().timeIntervalSince(lastAircraftStateAt) < 1.5 else {
+                result(command, false, "Live preflight failed: real Mavic Pro, grounded, RC linked, GPS/home set, ≥10 satellites, battery ≥40%, IMU ready required")
+                return
+            }
+            liveFlightAuthorizedUntil = Date().addingTimeInterval(900)
+            flightArmedUntil = .distantPast
+            publish {
+                $0.liveFlightAuthorized = true
+                $0.flightControlStatus = "LIVE · 15 minute pilot session authorized"
+            }
+            result(command, true, "Live flight authorization granted for 15 minutes. Confirm arm and takeoff separately.")
+        case .revokeLiveFlight:
+            liveFlightAuthorizedUntil = .distantPast
+            flightArmedUntil = .distantPast
+            disableSticks()
+            publish {
+                $0.liveFlightAuthorized = false
+                $0.flightControlStatus = "Live session revoked · controller handoff"
+            }
+            result(command, true, "Live flight control revoked; physical controller retains override")
         case .startDJISimulator:
             guard let simulator = fc.simulator, !simulator.isSimulatorActive,
+                  !liveFlightAuthorized,
                   snapshot.isFlying != true, snapshot.motorsOn != true else {
                 result(command, false, "DJI simulator unavailable or aircraft is not safely grounded")
                 return
@@ -279,12 +330,14 @@ final class DJIAdapter: NSObject {
             camera.stopRecordVideo(completion: completion)
 
         case .armFlight:
-            guard snapshot.isFlying == false,
-                  (simulatorOn || ((snapshot.batteryPercent ?? 0) >= 30 &&
-                       (snapshot.satelliteCount ?? 0) >= 8 &&
+            guard snapshot.isFlying == false, snapshot.motorsOn == false,
+                  (simulatorOn || (liveFlightAuthorized &&
+                       (snapshot.batteryPercent ?? 0) >= 40 &&
+                       (snapshot.satelliteCount ?? 0) >= 10 &&
                        snapshot.homeLocationSet == true &&
                        snapshot.imuPreheating == false)) else {
-                result(command, false, "Preflight failed: grounded aircraft, battery ≥30%, GPS ≥8, home point and ready IMU required")
+                result(command, false,
+                       "Preflight failed: grounded, GPS/home and 40%+ battery required for live takeoff")
                 return
             }
             flightArmedUntil = Date().addingTimeInterval(30)
@@ -294,7 +347,12 @@ final class DJIAdapter: NSObject {
             disableSticks()
             result(command, true, "Flight commands disarmed")
         case .takeoff:
-            guard Date() < flightArmedUntil, snapshot.isFlying == false else {
+            guard Date() < flightArmedUntil, snapshot.isFlying == false,
+                  (simulatorOn || (liveFlightAuthorized &&
+                      (snapshot.batteryPercent ?? 0) >= 40 &&
+                      (snapshot.satelliteCount ?? 0) >= 10 &&
+                      snapshot.homeLocationSet == true &&
+                      snapshot.imuPreheating == false)) else {
                 result(command, false, "Arm flight from Mac first (expires after 30 seconds)")
                 return
             }
@@ -329,7 +387,11 @@ final class DJIAdapter: NSObject {
             fc.turnOffMotors(completion: completion)
         case .enableSticks:
             guard snapshot.isFlying == true,
-                  (simulatorOn || (snapshot.batteryPercent ?? 0) >= 20) else {
+                  (simulatorOn || (liveFlightAuthorized &&
+                     snapshot.homeLocationSet == true &&
+                     (snapshot.batteryPercent ?? 0) >= 25 &&
+                     (snapshot.satelliteCount ?? 0) >= 8)),
+                  snapshot.activeTrackMovementEnabled != true else {
                 result(command, false, "Virtual Sticks require active flight and usable battery")
                 return
             }
@@ -385,6 +447,7 @@ final class DJIAdapter: NSObject {
 
     func networkDisconnected() {
         flightArmedUntil = .distantPast
+        liveFlightAuthorizedUntil = .distantPast
         disableSticks()
         activeTrack.lostMacConnection()
     }
@@ -418,12 +481,16 @@ final class DJIAdapter: NSObject {
             disableSticks()
             return
         }
-        #if !GROUNDSTATION_FLIGHT_TESTED
-        guard fc.simulator?.isSimulatorActive == true else {
+        let simulatorOn = fc.simulator?.isSimulatorActive == true
+        guard simulatorOn ||
+              (liveFlightAuthorized &&
+               snapshot.homeLocationSet == true &&
+               (snapshot.batteryPercent ?? 0) >= 25 &&
+               (snapshot.satelliteCount ?? 0) >= 8 &&
+               snapshot.imuPreheating == false) else {
             disableSticks()
             return
         }
-        #endif
         let age = Date().timeIntervalSince(lastSticksAt)
         if age > 0.8 {
             disableSticks()
@@ -444,7 +511,16 @@ final class DJIAdapter: NSObject {
         guard sticksEnabled else { return }
         sticksEnabled = false
         lastAxes = (0, 0, 0, 0)
-        controller?.setVirtualStickModeEnabled(false, withCompletion: nil)
+        // Always send a neutral vector before relinquishing control.
+        // DJI's v4 firmware may otherwise briefly keep the last nonzero
+        // movement command if the Virtual Stick mode is disabled.
+        if let fc = controller, fc.isConnected {
+            let neutral = DJIVirtualStickFlightControlData(
+                pitch: 0, roll: 0, yaw: 0, verticalThrottle: 0)
+            fc.send(neutral, withCompletion: nil)
+            fc.send(neutral, withCompletion: nil)
+            fc.setVirtualStickModeEnabled(false, withCompletion: nil)
+        }
         publish {
             $0.virtualSticksEngaged = false
             $0.flightControlStatus = "Virtual Stick released · physical RC in control"
@@ -472,6 +548,7 @@ extension DJIAdapter: DJISDKManagerDelegate {
     }
 
     func productDisconnected() {
+        liveFlightAuthorizedUntil = .distantPast
         activeTrack.lostMacConnection()
         disableSticks()
         controller = nil
@@ -491,6 +568,7 @@ extension DJIAdapter: DJISDKManagerDelegate {
             $0.simulated = false
             $0.djiSimulatorActive = false
             $0.virtualSticksEngaged = false
+            $0.liveFlightAuthorized = false
         }
     }
 
@@ -528,6 +606,8 @@ extension DJIAdapter: DJIFlightControllerDelegate {
             $0.simulated = false
             $0.djiSimulatorActive = fc.simulator?.isSimulatorActive == true
             $0.virtualSticksEngaged = self.sticksEnabled
+            $0.liveFlightAuthorized = fc.simulator?.isSimulatorActive != true &&
+                self.liveFlightAuthorized
             $0.altitudeMeters = state.altitude.isFinite ? Double(state.altitude) : nil
             $0.velocityX = Double(state.velocityX)
             $0.velocityY = Double(state.velocityY)
