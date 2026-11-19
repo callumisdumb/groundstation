@@ -19,6 +19,7 @@ struct FlightCockpitView: View {
     @State private var mapFocused = false
     @State private var gimbalPitch = -30.0
     @State private var manualTrackingLabel = "Vehicle / object"
+    @State private var actionToConfirm: GroundStationCommand.Action?
 
     private let line = Color.white.opacity(0.12)
     private let green = Color(red: 0.23, green: 0.89, blue: 0.70)
@@ -53,6 +54,27 @@ struct FlightCockpitView: View {
             }
         }
         .background(console)
+        .confirmationDialog(
+            "Confirm DJI simulator action",
+            isPresented: Binding(
+                get: { actionToConfirm != nil },
+                set: { if !$0 { actionToConfirm = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let action = actionToConfirm {
+                Button(confirmTitle(action)) {
+                    if action == .land || action == .stopDJISimulator {
+                        keyboard.keyboardEnabled = false
+                        client.releaseVirtualSticks()
+                    }
+                    client.send(action)
+                    actionToConfirm = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { actionToConfirm = nil }
+        } message: {
+            Text("Only test with propellers physically removed, the DJI remote controller linked, and a clear area. Live-aircraft flight output remains locked.")
+        }
     }
 
     // MARK: Full-height satellite map
@@ -406,29 +428,75 @@ struct FlightCockpitView: View {
     }
 
     private var flightInspector: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Label("FLIGHT ACTUATION LOCKED", systemImage: "lock.shield")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(amber)
-            Text("Keyboard input is available for preview. Flight commands remain disabled until authenticated transport, latency and failsafe testing are complete.")
+        VStack(alignment: .leading, spacing: 12) {
+            Label("DJI SIMULATOR", systemImage: "gamecontroller")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(green)
+            Text("Test Mac controls against DJI's aircraft simulator. This is not real flight. Remove propellers before powering the drone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Toggle("Keyboard preview", isOn: $keyboard.keyboardEnabled)
-            Text("HOLD SPACE + W/A/S/D • Q/E • C/Z")
-                .font(.system(size: 10, design: .monospaced))
-            Text(keyboard.status)
-                .font(.caption)
-                .foregroundStyle(green)
-            Divider()
+                .fixedSize(horizontal: false, vertical: true)
+            statusRow("Encrypted flight key", client.flightKeyVerified ? "VERIFIED" : "NOT PAIRED")
+            statusRow("DJI Simulator", client.djiSimulatorActive ? "ACTIVE" : "OFF")
+            statusRow("Sticks", client.virtualSticksEnabled ? "ENGAGED" : "RELEASED")
+            statusRow("Flight", telemetry?.isFlying == true ? "AIRBORNE IN SIM" : "ON GROUND")
+            statusRow("Mode", telemetry?.flightControlStatus ?? "—")
+            Divider().overlay(line)
             HStack {
-                Button("Takeoff") {}
-                Button("Land") {}
-                Button("RTH") {}
+                Button("Start Simulator") { actionToConfirm = .startDJISimulator }
+                    .disabled(!aircraftLinked || !client.flightKeyVerified ||
+                              client.djiSimulatorActive || telemetry?.isFlying == true)
+                Button("Stop Simulator") { actionToConfirm = .stopDJISimulator }
+                    .disabled(!client.djiSimulatorActive || telemetry?.isFlying == true)
             }
-            .disabled(true)
             .controlSize(.small)
-            Text("Original DJI remote controller is the required manual fallback.")
-                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Arm (30s)") { client.send(.armFlight) }
+                    .disabled(!client.flightReady || telemetry?.isFlying == true)
+                Button("Take off") { actionToConfirm = .takeoff }
+                    .disabled(!client.flightReady || !client.flightArmed ||
+                              telemetry?.isFlying == true)
+                Button("Land") { actionToConfirm = .land }
+                    .disabled(!client.flightReady || telemetry?.isFlying != true)
+            }
+            .controlSize(.small)
+            Divider().overlay(line)
+            Text("KEYBOARD MOVEMENT")
+                .font(.system(size: 10, weight: .bold))
+            Toggle("Capture WASD + Space", isOn: $keyboard.keyboardEnabled)
+                .disabled(!client.djiSimulatorActive || !client.flightReady)
+            Toggle("Precision mode (X)", isOn: $keyboard.preciseMode)
+            Button {
+                client.send(.enableSticks)
+            } label: {
+                Label("Enable DJI Virtual Sticks", systemImage: "gamecontroller.fill")
+            }
+            .disabled(!client.flightReady || telemetry?.isFlying != true ||
+                      client.virtualSticksEnabled)
+            Button {
+                keyboard.keyboardEnabled = false
+                client.releaseVirtualSticks()
+            } label: {
+                Label("Release to physical controller", systemImage: "hand.raised")
+            }
+            .disabled(!client.connected)
+            Text(keyboard.status)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(green)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("WASD move · Q/E yaw · C/Z climb · hold SPACE · X precision · ESC release.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider().overlay(line)
+            Text(client.lastControlResult)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(amber)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Real aircraft controls remain locked until supervised hardware validation. Always retain the DJI remote controller.")
+                .font(.system(size: 10))
+                .foregroundStyle(amber)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -640,45 +708,78 @@ struct FlightCockpitView: View {
             HStack {
                 deckLabel("FLIGHT OPERATIONS")
                 Spacer()
-                Image(systemName: "lock.shield")
-                    .foregroundStyle(amber)
+                Image(systemName: client.flightReady ?
+                      "checkmark.shield.fill" : "lock.shield.fill")
+                    .foregroundStyle(client.flightReady ? green : amber)
             }
             HStack(spacing: 5) {
-                flightButton("TAKEOFF", icon: "arrow.up")
-                flightButton("LAND", icon: "arrow.down")
-                flightButton("RTH", icon: "house.fill")
+                flightButton("ARM", icon: "lock.open",
+                             enabled: client.flightReady &&
+                                      telemetry?.isFlying == false) {
+                    client.send(.armFlight)
+                }
+                flightButton("TAKEOFF", icon: "arrow.up",
+                             enabled: client.flightReady && client.flightArmed &&
+                                      telemetry?.isFlying == false) {
+                    actionToConfirm = .takeoff
+                }
+                flightButton("LAND", icon: "arrow.down",
+                             enabled: client.flightReady && telemetry?.isFlying == true) {
+                    actionToConfirm = .land
+                }
             }
             HStack {
-                Circle().fill(amber).frame(width: 6, height: 6)
-                Text("ACTUATION LOCKED")
-                    .foregroundStyle(amber)
+                Circle()
+                    .fill(client.djiSimulatorActive ? green : amber)
+                    .frame(width: 6, height: 6)
+                Text(client.djiSimulatorActive ?
+                     "DJI SIMULATOR" : "LIVE FLIGHT LOCKED")
+                    .foregroundStyle(client.djiSimulatorActive ? green : amber)
                 Spacer()
+                Button("Simulator / Controls") {
+                    activeTool = .flight
+                    showToolPanel = true
+                }
+                .font(.system(size: 9))
+                .buttonStyle(.plain)
+                .foregroundStyle(green)
             }
             .font(.system(size: 10, weight: .bold, design: .monospaced))
-            Text("Safe UI preview only. Physical RC required.")
+            Text(client.virtualSticksEnabled ?
+                 "Sticks engaged · SPACE + WASD" :
+                 "Physical RC retained · flight output gated")
                 .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.46))
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.white.opacity(0.57))
+                .lineLimit(2)
             Spacer(minLength: 0)
         }
         .padding(12)
     }
 
-    private func flightButton(_ title: String, icon: String) -> some View {
-        Button {} label: {
+    private func flightButton(_ title: String, icon: String, enabled: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             VStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                Text(title)
-                    .font(.system(size: 9, weight: .semibold))
+                Image(systemName: icon).font(.system(size: 14))
+                Text(title).font(.system(size: 9, weight: .semibold))
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 46)
+            .frame(height: 44)
         }
         .buttonStyle(.bordered)
-        .disabled(true)
-        .help("Flight actuation locked pending safety and link testing")
+        .disabled(!enabled)
     }
+
+    private func confirmTitle(_ action: GroundStationCommand.Action) -> String {
+        switch action {
+        case .startDJISimulator: return "Start DJI Simulator"
+        case .stopDJISimulator: return "Stop DJI Simulator"
+        case .takeoff: return "Confirm simulator takeoff"
+        case .land: return "Confirm simulator landing"
+        default: return "Confirm command"
+        }
+    }
+
     private func deckLabel(_ label: String) -> some View {
         Text(label)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
