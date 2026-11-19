@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-#if canImport(DJISDK)
+#if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED
 import DJISDK
 #endif
 
@@ -20,7 +20,7 @@ final class DJIActiveTrackCoordinator: NSObject {
     private var lastState = "Idle"
     private var aircraftMovementApproved = false
 
-    #if canImport(DJISDK)
+    #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED
     private var activeOperator: DJIActiveTrackMissionOperator? {
         DJISDKManager.missionControl()?.activeTrackMissionOperator
     }
@@ -67,7 +67,7 @@ final class DJIActiveTrackCoordinator: NSObject {
         preparedAt = Date()
         aircraftMovementApproved = false
 
-        #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED
+        #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED && GROUNDSTATION_ACTIVE_TRACK_TESTED
         guard let op = activeOperator else {
             completion(false, "DJI ActiveTrack mission operator not supported")
             return
@@ -99,7 +99,7 @@ final class DJIActiveTrackCoordinator: NSObject {
     /// Explicit DJI confirmation is the point at which the aircraft would
     /// start moving relative to the target. Never bypass that confirmation.
     func confirm(completion: @escaping (Bool, String) -> Void) {
-        #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED
+        #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED && GROUNDSTATION_ACTIVE_TRACK_TESTED
         guard pendingRect != nil,
               Date().timeIntervalSince(preparedAt) < 25,
               let op = activeOperator else {
@@ -123,7 +123,7 @@ final class DJIActiveTrackCoordinator: NSObject {
         aircraftMovementApproved = false
         lastState = "Stop requested"
         onState?(lastState, nil, false, nil)
-        #if canImport(DJISDK)
+        #if canImport(DJISDK) && GROUNDSTATION_ACTIVE_TRACK_TESTED
         guard let op = activeOperator else {
             completion?(false, "DJI ActiveTrack operator unavailable")
             return

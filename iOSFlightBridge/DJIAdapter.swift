@@ -12,6 +12,20 @@ final class DJIAdapter: NSObject {
     var onUpdate: ((GroundStationMessage.Payload) -> Void)?
     var onResult: ((String, Bool, String) -> Void)?
 
+    private let activeTrack = DJIActiveTrackCoordinator()
+
+    override init() {
+        super.init()
+        activeTrack.onState = { [weak self] state, rect, moving, error in
+            self?.publish {
+                $0.activeTrackState = state
+                $0.activeTrackTargetRect = rect
+                $0.activeTrackMovementEnabled = moving
+                $0.activeTrackError = error
+            }
+        }
+    }
+
     private var snapshot = GroundStationMessage.Payload()
     private var lastAircraftStateAt = Date.distantPast
     private var flightArmedUntil = Date.distantPast
@@ -52,6 +66,7 @@ final class DJIAdapter: NSObject {
         let hasAircraft = !model.lowercased().contains("only remotecontroller") &&
             actualController?.isConnected == true
         if !hasAircraft {
+            activeTrack.lostMacConnection()
             if sticksEnabled { disableSticks() }
             controller = nil
             lastFlightState = nil
@@ -87,6 +102,7 @@ final class DJIAdapter: NSObject {
             return
         }
         if controller !== actualController {
+            activeTrack.connected()
             controller = actualController
             actualController?.delegate = self
             subscribeToBattery()
@@ -105,6 +121,44 @@ final class DJIAdapter: NSObject {
     }
 
     func handle(_ command: GroundStationCommand) {
+        // STOP always has priority, even after a telemetry dropout.
+        if command.action == .activeTrackStop {
+            activeTrack.stop { [weak self] accepted, detail in
+                self?.result(command, accepted, detail)
+            }
+            return
+        }
+
+        if command.action == .activeTrackPrepare ||
+           command.action == .activeTrackConfirm {
+            #if canImport(DJISDK)
+            guard snapshot.aircraftConnected == true,
+                  snapshot.isFlying == true,
+                  snapshot.imuPreheating == false,
+                  (snapshot.batteryPercent ?? 0) >= 40,
+                  (snapshot.satelliteCount ?? 0) >= 10,
+                  snapshot.homeLocationSet == true,
+                  Date().timeIntervalSince(lastAircraftStateAt) < 1.5 else {
+                result(command, false, "DJI follow requires airborne aircraft, fresh telemetry, GPS, home point and ≥40% battery")
+                return
+            }
+            if command.action == .activeTrackPrepare, let rect = command.trackingRect {
+                activeTrack.prepare(rect) { [weak self] accepted, detail in
+                    self?.result(command, accepted, detail)
+                }
+            } else if command.action == .activeTrackConfirm {
+                activeTrack.confirm { [weak self] accepted, detail in
+                    self?.result(command, accepted, detail)
+                }
+            } else {
+                result(command, false, "Missing or invalid selected target")
+            }
+            #else
+            result(command, false, "DJI SDK unavailable for native ActiveTrack")
+            #endif
+            return
+        }
+
         #if canImport(DJISDK)
         guard let fc = controller, fc.isConnected, snapshot.aircraftConnected == true else {
             result(command, false, "Aircraft not linked. Check controller ↔ Mavic connection.")
@@ -136,6 +190,10 @@ final class DJIAdapter: NSObject {
 
         switch command.action {
         case .gimbalPitch:
+            guard snapshot.activeTrackMovementEnabled != true else {
+                result(command, false, "DJI ActiveTrack owns the gimbal during following")
+                return
+            }
             guard let pitch = command.value, pitch.isFinite, (-90...0).contains(pitch),
                   let gimbal = (DJISDKManager.product() as? DJIAircraft)?.gimbal else {
                 result(command, false, "Gimbal unavailable or pitch outside -90°…0°")
@@ -242,6 +300,8 @@ final class DJIAdapter: NSObject {
         case .disableSticks:
             disableSticks()
             result(command, true, "Virtual Stick mode released to DJI controller")
+        case .activeTrackPrepare, .activeTrackConfirm, .activeTrackStop:
+            result(command, false, "ActiveTrack command routing error")
         case .sticks:
             guard sticksEnabled, snapshot.isFlying == true else {
                 // Avoid filling the logs with rejected held-button messages.
@@ -265,6 +325,7 @@ final class DJIAdapter: NSObject {
     func networkDisconnected() {
         flightArmedUntil = .distantPast
         disableSticks()
+        activeTrack.lostMacConnection()
     }
 
     private func result(_ cmd: GroundStationCommand, _ ok: Bool, _ detail: String) {
@@ -338,6 +399,7 @@ extension DJIAdapter: DJISDKManagerDelegate {
     }
 
     func productDisconnected() {
+        activeTrack.lostMacConnection()
         disableSticks()
         controller = nil
         lastFlightState = nil
