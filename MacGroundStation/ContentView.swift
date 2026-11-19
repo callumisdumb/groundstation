@@ -1,25 +1,13 @@
 import CoreLocation
 import SwiftUI
 
+/// App navigation lives in a compact command bar rather than a permanent
+/// sidebar. FlightHub's cockpit uses its real estate for video and maps.
 enum GSWorkspace: String, CaseIterable, Identifiable {
     case cockpit = "Virtual Cockpit"
     case missions = "Mission Planning"
     case activity = "Activity & Logs"
     var id: Self { self }
-    var icon: String {
-        switch self {
-        case .cockpit: return "rectangle.split.3x1"
-        case .missions: return "point.topleft.down.curvedto.point.bottomright.up"
-        case .activity: return "waveform.path.ecg.rectangle"
-        }
-    }
-    var subtitle: String {
-        switch self {
-        case .cockpit: return "Live camera • aircraft map • control centre"
-        case .missions: return "Offline route drafting and map overlays"
-        case .activity: return "Connection events and command acknowledgements"
-        }
-    }
 }
 
 struct ContentView: View {
@@ -33,47 +21,37 @@ struct ContentView: View {
     @State private var satellite = true
     @State private var followAircraft = true
     @State private var track: [CLLocationCoordinate2D] = []
+    @State private var showConnection = false
 
-    private var telemetry: GroundStationMessage.Payload? { client.latestStatus?.payload }
-    private var aircraftConnected: Bool { telemetry?.validAircraft == true }
+    private var status: GroundStationMessage.Payload? { client.latestStatus?.payload }
+    private var aircraftConnected: Bool { status?.validAircraft == true }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: 208)
-                .background(GSPalette.side)
-            Rectangle().fill(GSPalette.border).frame(width: 1)
-            VStack(spacing: 0) {
-                topbar
-                Divider().overlay(GSPalette.border)
-                Group {
-                    switch workspace {
-                    case .cockpit:
-                        CockpitWorkspace(
-                            client: client,
-                            video: liveVideo,
-                            keyboard: keyboard,
-                            missions: missions,
-                            satellite: $satellite,
-                            followAircraft: $followAircraft,
-                            track: track)
-                    case .missions:
-                        MissionWorkspace(
-                            missions: missions,
-                            client: client,
-                            satellite: $satellite,
-                            track: track)
-                    case .activity:
-                        ActivityWorkspace(client: client)
-                    }
+        VStack(spacing: 0) {
+            commandBar
+                .frame(height: 52)
+            Rectangle().fill(Color.white.opacity(0.11)).frame(height: 1)
+            Group {
+                switch workspace {
+                case .cockpit:
+                    FlightCockpitView(
+                        client: client, video: liveVideo, keyboard: keyboard,
+                        missions: missions, satellite: $satellite,
+                        followAircraft: $followAircraft, track: track)
+                case .missions:
+                    MissionWorkspace(missions: missions, client: client,
+                                     satellite: $satellite, track: track)
+                case .activity:
+                    ActivityWorkspace(client: client)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                footer
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            bottomStatus
+                .frame(height: 24)
         }
-        .background(GSPalette.background)
+        .background(Color(red: 0.055, green: 0.066, blue: 0.08))
         .preferredColorScheme(.dark)
-        .frame(minWidth: 1250, minHeight: 770)
+        .frame(minWidth: 1130, minHeight: 710)
         .onAppear { keyboard.install(client: client) }
         .onDisappear {
             keyboard.uninstall()
@@ -85,165 +63,190 @@ struct ContentView: View {
             if !connected { liveVideo.disconnect() }
         }
         .onChange(of: client.latestStatus?.payload.latitude) { _ in
-            guard let data = telemetry, data.validAircraft,
-                  let lat = data.latitude, let lon = data.longitude else { return }
+            guard let status, status.validAircraft,
+                  let lat = status.latitude, let lon = status.longitude else { return }
             let point = CLLocationCoordinate2D(latitude: lat, longitude: lon)
             guard CLLocationCoordinate2DIsValid(point) else { return }
             if let last = track.last,
-               abs(last.latitude - point.latitude) + abs(last.longitude - point.longitude) < 0.000001 {
+               abs(last.latitude - lat) + abs(last.longitude - lon) < 0.000001 {
                 return
             }
             track.append(point)
-            if track.count > 350 { track.removeFirst(track.count - 350) }
+            if track.count > 400 { track.removeFirst(track.count - 400) }
         }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 11) {
-                Image(systemName: "airplane.circle.fill")
-                    .font(.system(size: 29))
-                    .foregroundStyle(GSPalette.cyan)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("GROUNDSTATION")
-                        .font(.system(size: 12, weight: .heavy, design: .rounded))
-                        .tracking(0.5)
-                    Text("MAVIC PRO · V1")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(GSPalette.muted)
+    private var commandBar: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(red: 0.17, green: 0.75, blue: 0.68))
+                    .frame(width: 28, height: 28)
+                Image(systemName: "airplane")
+                    .foregroundStyle(.black)
+                    .font(.system(size: 15, weight: .bold))
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("GROUNDSTATION")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .tracking(0.7)
+                Text("VIRTUAL COCKPIT  /  MAVIC PRO")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.47))
+            }
+            Rectangle()
+                .fill(.white.opacity(0.14))
+                .frame(width: 1, height: 29)
+                .padding(.horizontal, 5)
+
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(aircraftConnected ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                Text(aircraftConnected ? "AIRCRAFT LINKED" :
+                     (client.connected ? "RC / AIRCRAFT CHECK" : "STANDBY · DISCONNECTED"))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.83))
+            }
+            Spacer(minLength: 8)
+
+            if workspace == .cockpit {
+                Text("FLIGHT OUTPUT LOCKED")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            topCommand("Virtual Cockpit", icon: "viewfinder",
+                       active: workspace == .cockpit) { workspace = .cockpit }
+            topCommand("Routes", icon: "point.topleft.down.curvedto.point.bottomright.up",
+                       active: workspace == .missions) { workspace = .missions }
+            topCommand("Logs", icon: "clock.arrow.circlepath",
+                       active: workspace == .activity) { workspace = .activity }
+
+            Rectangle()
+                .fill(.white.opacity(0.14))
+                .frame(width: 1, height: 27)
+
+            Button { showConnection.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: client.connected ? "wifi" : "wifi.slash")
+                        .foregroundStyle(client.connected ? Color.green : Color.orange)
+                    Text(client.connected ? "Connected" : "Connect")
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(Color.white.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            .padding(.horizontal, 12).padding(.top, 14)
-
-            Text("WORKSPACE")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(GSPalette.muted)
-                .padding(.horizontal, 14)
-
-            ForEach(GSWorkspace.allCases) { tab in
-                Button { workspace = tab } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: tab.icon).frame(width: 17)
-                        Text(tab.rawValue)
-                            .font(.system(size: 12, weight: workspace == tab ? .semibold : .medium))
-                        Spacer()
-                    }
-                    .foregroundStyle(workspace == tab ? GSPalette.cyan : .white.opacity(0.7))
-                    .padding(.vertical, 11)
-                    .padding(.horizontal, 12)
-                    .background(workspace == tab ? GSPalette.cyan.opacity(0.10) : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
+            .buttonStyle(.plain)
+            .popover(isPresented: $showConnection, arrowEdge: .bottom) {
+                connectionPopover
+                    .frame(width: 318)
             }
-
-            Divider().padding(.horizontal, 14)
-            Text("CONNECTED DEVICES")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(GSPalette.muted)
-                .padding(.horizontal, 14)
-            VStack(alignment: .leading, spacing: 13) {
-                device("iPhone Bridge", status: client.connected, icon: "iphone")
-                device("Mavic Pro", status: aircraftConnected, icon: "airplane")
-                device("Controller", status: telemetry?.controllerConnected == true, icon: "gamecontroller")
-            }.padding(.horizontal, 16)
-
-            Spacer()
-            VStack(alignment: .leading, spacing: 9) {
-                Label("LOCAL DEVELOPMENT", systemImage: "wrench.adjustable")
-                    .foregroundStyle(GSPalette.amber)
-                    .font(.system(size: 10, weight: .bold))
-                Text("Flight actuation locked pending safety and network verification.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(GSPalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12)
-            .background(GSPalette.raised.opacity(0.65))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .padding(10)
         }
+        .padding(.horizontal, 15)
+        .background(Color(red: 0.085, green: 0.096, blue: 0.111))
     }
 
-    private func device(_ name: String, status: Bool, icon: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .frame(width: 16)
-                .foregroundStyle(GSPalette.muted)
-            Text(name)
-                .font(.system(size: 11))
-                .lineLimit(1)
-            Spacer()
-            Circle()
-                .fill(status ? GSPalette.green : GSPalette.muted.opacity(0.4))
-                .frame(width: 7, height: 7)
+    private func topCommand(_ title: String, icon: String,
+                            active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title)
+            }
+            .font(.system(size: 11, weight: active ? .semibold : .medium))
+            .foregroundStyle(active ? .white : .white.opacity(0.57))
+            .padding(.horizontal, 10)
+            .frame(height: 31)
+            .background(active ? Color.white.opacity(0.11) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+        .buttonStyle(.plain)
     }
 
-    private var topbar: some View {
-        VStack(spacing: 12) {
+    private var connectionPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(workspace.rawValue)
-                        .font(.system(size: 21, weight: .bold, design: .rounded))
-                    Text(workspace.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(GSPalette.muted)
-                }
+                Label("iPhone bridge", systemImage: "iphone.gen3")
+                    .font(.headline)
                 Spacer()
-                GSStatusChip(label: aircraftConnected ? "AIRCRAFT ONLINE" :
-                             (client.connected ? "BRIDGE ONLINE · RC ONLY" : "DISCONNECTED"),
-                             kind: aircraftConnected ? .good : .caution)
-                GSStatusChip(label: "FLIGHT CONTROLS LOCKED", kind: .caution)
+                Image(systemName: client.connected ? "checkmark.circle.fill" : "circle.dotted")
+                    .foregroundStyle(client.connected ? .green : .orange)
             }
-            HStack(spacing: 10) {
-                Image(systemName: "wifi")
-                    .foregroundStyle(GSPalette.cyan)
-                TextField("iPhone Wi-Fi IP", text: $host)
+            Text("Mac and iPhone must be on the same trusted Wi-Fi. The iPhone runs the DJI SDK while connected to the original controller.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("iPHONE WI-FI ADDRESS")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                TextField("e.g. 192.168.4.57", text: $host)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 155)
-                SecureField("Pairing code", text: $client.pairingCode)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                Text("SIX-DIGIT PAIRING CODE")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                SecureField("From iOSFlightBridge", text: $client.pairingCode)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
+            }
+            HStack {
                 Button {
                     UserDefaults.standard.set(host, forKey: "GroundStationBridgeIP")
                     client.connect(host: host, port: 8765)
                     liveVideo.connect(host: host, pairingCode: client.pairingCode)
+                    showConnection = false
                 } label: { Label("Connect", systemImage: "link") }
-                .disabled(host.isEmpty || client.pairingCode.count != 6)
-                Button {
+                    .disabled(host.isEmpty || client.pairingCode.count != 6)
+                    .keyboardShortcut(.return, modifiers: [])
+                Button("Disconnect") {
+                    keyboard.releaseAll()
                     liveVideo.disconnect()
                     client.disconnect()
-                    keyboard.releaseAll()
-                } label: { Label("Disconnect", systemImage: "xmark.circle") }
-                .disabled(!client.connected && !liveVideo.connected)
-                Spacer()
-                Text("TELEM 8765  •  VIDEO 8766")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(GSPalette.muted)
+                    showConnection = false
+                }.disabled(!client.connected && !liveVideo.connected)
             }
+            Divider()
+            HStack {
+                Text("TELEMETRY 8765")
+                Spacer()
+                Text("VIDEO 8766")
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background(GSPalette.side)
+        .padding(17)
     }
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Circle().fill(client.connected ? GSPalette.green : GSPalette.amber)
+    private var bottomStatus: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(client.connected ? Color.green : Color.orange)
                 .frame(width: 6, height: 6)
-            Text(client.connected ? "Bridge connected" : "Bridge disconnected")
-            Text("·")
+            Text(client.connected ? "BRIDGE ONLINE" : "BRIDGE OFFLINE")
+            Rectangle().fill(.white.opacity(0.16)).frame(width: 1, height: 10)
             Text(liveVideo.streamStatus)
                 .lineLimit(1)
             Spacer()
-            Text("LOCAL MAC GROUND CONTROL · NOT DJI FLIGHTHUB")
+            Text("MAC CONTROL STATION")
+            Text("·")
+            Text("LOCAL LINK ONLY")
+            Text("·")
+            Text("FLIGHT ACTUATION DISABLED")
+                .foregroundStyle(.orange)
         }
-        .font(.system(size: 10, design: .monospaced))
-        .foregroundStyle(GSPalette.muted)
-        .padding(.horizontal, 18)
-        .frame(height: 27)
-        .background(GSPalette.side)
+        .font(.system(size: 9, weight: .medium, design: .monospaced))
+        .foregroundStyle(.white.opacity(0.48))
+        .padding(.horizontal, 13)
+        .background(Color(red: 0.085, green: 0.096, blue: 0.111))
     }
 }
