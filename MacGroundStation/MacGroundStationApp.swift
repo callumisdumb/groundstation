@@ -5,7 +5,9 @@ struct MacGroundStationApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: 1080, minHeight: 760)
+                .preferredColorScheme(.dark)
         }
+        .windowStyle(.titleBar)
     }
 }
