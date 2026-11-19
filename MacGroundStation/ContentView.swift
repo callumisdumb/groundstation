@@ -3,6 +3,7 @@ import MapKit
 
 struct ContentView: View {
     @StateObject private var client = BridgeClient()
+    @StateObject private var liveVideo = H264LiveVideoClient()
     @State private var host = "192.168.1.100"
     @State private var pitch = -30.0
     @State private var actionToConfirm: GroundStationCommand.Action?
@@ -37,7 +38,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 logPanel
-                Text("EXPERIMENTAL: flight actions are disabled pending simulator testing, secure transport and physical-controller fallback verification. Sampled video is NOT suitable for piloting.")
+                Text("EXPERIMENTAL: flight actions remain disabled. The live H.264 camera preview is for bench monitoring only, not a validated low-latency piloting link.")
                     .foregroundStyle(.orange)
                     .font(.caption)
             }
@@ -61,6 +62,10 @@ struct ContentView: View {
             } message: {
                 Text("Operate only with a clear area, a valid DJI aircraft link, and a human ready at the physical controller.")
             }
+        .onDisappear {
+            liveVideo.disconnect()
+            client.disconnect()
+        }
         .onChange(of: client.latestStatus?.payload.latitude) { value in
             if let latitude = value, let longitude = client.latestStatus?.payload.longitude,
                CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(latitude: latitude, longitude: longitude)) {
@@ -94,8 +99,14 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder).frame(width: 180)
                 SecureField("Six-digit pairing code", text: $client.pairingCode)
                     .textFieldStyle(.roundedBorder).frame(width: 170)
-                Button("Connect") { client.connect(host: host, port: 8765) }
-                Button("Disconnect") { client.disconnect() }.disabled(!client.connected)
+                Button("Connect") {
+                    client.connect(host: host, port: 8765)
+                    liveVideo.connect(host: host, pairingCode: client.pairingCode)
+                }
+                Button("Disconnect") {
+                    liveVideo.disconnect()
+                    client.disconnect()
+                }.disabled(!client.connected && !liveVideo.connected)
                 Spacer()
                 Image(systemName: "wifi").foregroundStyle(client.connected ? .green : .gray)
                 Text(client.connected ? "Bridge online" : "Disconnected")
@@ -105,49 +116,57 @@ struct ContentView: View {
 
     private var videoPanel: some View {
         GroupBox {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black)
-                    if let frame = client.latestFrame {
-                        Image(nsImage: frame)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        VStack(spacing: 8) {
-                            Image(systemName: "video.slash").font(.system(size: 42))
-                            Text("Waiting for Mavic camera stream")
-                            Text("Check aircraft link, then check DJIWidget decoding on the iPhone")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }.foregroundStyle(.secondary)
+            ZStack {
+                H264LiveVideoView(display: liveVideo.display)
+                    .frame(height: 345)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                if liveVideo.framesDisplayed == 0 {
+                    VStack(spacing: 9) {
+                        Image(systemName: "video.slash")
+                            .font(.system(size: 34))
+                        Text("Waiting for live H.264 stream")
+                            .font(.headline)
+                        Text(liveVideo.streamStatus)
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+                        Text("Check aircraft camera link and enter the six-digit pairing code")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    VStack {
-                        HStack {
-                            Label("CAMERA PREVIEW", systemImage: "video")
-                            Spacer()
-                            Text("SAMPLED JPEG · NOT FOR PILOTING").foregroundStyle(.orange)
-                        }
-                        .font(.caption.bold())
-                        .padding(10)
-                        .background(.black.opacity(0.55))
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            Text(client.lastFrameAt.map {
-                                "Frame: \($0.formatted(date: .omitted, time: .standard))"
-                            } ?? "No frames")
-                            .font(.caption.monospaced())
-                            .padding(8)
-                            .background(.black.opacity(0.65))
-                        }
-                    }
-                    .padding(6)
+                    .foregroundStyle(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.black.opacity(0.6))
                 }
-                .frame(height: 345)
+                VStack {
+                    HStack(spacing: 8) {
+                        Label("LIVE H.264", systemImage: "video")
+                            .foregroundStyle(.cyan)
+                        Text(liveVideo.framesDisplayed > 0 ?
+                             "\(liveVideo.framesPerSecond) FPS" : "WAITING")
+                            .foregroundStyle(liveVideo.framesDisplayed > 0 ? .green : .orange)
+                        Spacer()
+                        Text("EXPERIMENTAL · DO NOT PILOT BY VIDEO")
+                            .foregroundStyle(.orange)
+                    }
+                    .font(.caption.bold())
+                    .padding(10)
+                    .background(.black.opacity(0.65))
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Text(liveVideo.streamStatus)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .padding(8)
+                            .background(.black.opacity(0.7))
+                    }
+                }
+                .padding(6)
             }
         } label: {
-            Label("Aircraft Camera", systemImage: "camera")
+            Label("Continuous aircraft video (dedicated Wi-Fi channel)", systemImage: "camera")
         }
     }
 
