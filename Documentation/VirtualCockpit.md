@@ -94,7 +94,7 @@ or specific SDK support; they are **not** implied by the current UI.
 3. With **propellers removed**, connect the Mavic Pro and RC to the iPhone.
 4. Connect from Mac using IP + pairing code. Confirm telemetry and live H.264.
 5. Choose **Virtual Cockpit**, toggle keyboard capture and press WASD.
-   Keys should illuminate, while actual flight actuation remains locked.
+   Keys illuminate in keyboard preview. DJI Simulator input moves the simulated drone; real movement requires the separately authorized experimental LIVE mode in LiveFlight.md.
 6. Create a local route in **Mission Planning**, add points, export GeoJSON.
 7. Check status messages in **Activity & Logs**.
 8. If Xcode errors, capture exact lines from the build report.

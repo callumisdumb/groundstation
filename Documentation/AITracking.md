@@ -77,9 +77,8 @@ stop from the iPhone side. The existing physical DJI RC must remain the
 emergency operator override.
 
 **Live autonomous flight is not enabled.**
-The project deliberately does not define
-`GROUNDSTATION_ACTIVE_TRACK_TESTED` or `GROUNDSTATION_FLIGHT_TESTED`.
-Even though native ActiveTrack exists, activation of aircraft steering
+The project does not define `GROUNDSTATION_ACTIVE_TRACK_TESTED`.
+Manual live flight now has separate authorization (see LiveFlight.md), but autonomous ActiveTrack steering
 requires several independent checks:
 - secure authenticated Mac↔iPhone command transport (the current TCP
   with six-digit pairing code is plaintext)

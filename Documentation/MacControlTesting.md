@@ -19,15 +19,13 @@ The Mac talks to the iPhone over a trusted LAN.
 - Mac-side flight UI scaffolding with hold-to-move directions and safety confirmations
 - Six-digit pairing code displayed on iPhone and entered on Mac
 
-### Deliberately unavailable until safety review
+### Experimental LIVE mode — explicit authorization required
 
-- Live takeoff/landing, motor start/stop, RTH and virtual-stick actions are **locked**
-  using a \`GROUNDSTATION_FLIGHT_TESTED\` compilation flag NOT set by the project.
-- Do not unlock them until an authenticated **encrypted** network protocol is
-  implemented, simulator tests and real-device latency/failsafes validated.
-- A JPEG every two seconds is NOT flight-grade live video.
-- Flight should remain within applicable legal visual-line-of-sight restrictions.
-- The physical RC must be available at all times.
+- Simulator controls remain separate from real flight.
+- LIVE takeoff, landing, RTH and Virtual Sticks are now wired through explicit short-lived preflight authorization and separate takeoff confirmation.
+- Actual Mavic Pro flight has NOT been validated by CI; the physical RC must be ready for manual override.
+- The live camera is not a certified low-latency piloting link.
+- Read [LiveFlight.md](LiveFlight.md) for current operating conditions.
 
 ## How to test locally (same branch; do not switch)
 
@@ -134,10 +132,7 @@ The original Mavic Pro's SDK reports flight-controller simulator state
 separately from UI simulated telemetry. Simulator output and direct flight
 command results must be checked before trusting any control motion.
 
-**Live-aircraft flight output and autonomous follow remain locked** until
-secure transport, control latency, motor/obstacle handling, RC override and
-emergency failsafe behaviour have been tested with competent on-site pilot
-supervision. The Mac control protocol is a prototype, not a certification.
+**LIVE manual flight now has an explicit authorization path**, but real control, RC takeover, video latency and connection-loss behaviour still need supervised hardware validation. **Autonomous ActiveTrack remains locked.** The Mac protocol is a prototype, not a certification.
 
 
 ## Update — live flight authorization (2026-11-19)
