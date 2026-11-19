@@ -11,6 +11,7 @@ struct GroundStationLogEntry: Identifiable {
 @MainActor
 final class BridgeClient: ObservableObject {
     @Published private(set) var connected = false
+    @Published private(set) var virtualSticksEnabled = false
     @Published private(set) var latestStatus: GroundStationMessage?
     @Published private(set) var latestFrame: NSImage?
     @Published private(set) var lastTelemetryAt: Date?
@@ -20,6 +21,7 @@ final class BridgeClient: ObservableObject {
 
     private var connection: NWConnection?
     private var receiveBuffer = Data()
+    private var pendingActions: [String: GroundStationCommand.Action] = [:]
     private var lastStatusLog = Date.distantPast
     private var sticksTimer: Timer?
     private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
@@ -79,6 +81,8 @@ final class BridgeClient: ObservableObject {
         connection = nil
         conn.cancel()
         connected = false
+        virtualSticksEnabled = false
+        pendingActions.removeAll()
         latestStatus = nil
         latestFrame = nil
         lastTelemetryAt = nil
@@ -137,6 +141,15 @@ final class BridgeClient: ObservableObject {
                         lastFrameAt = Date()
                     }
                 case .commandResult:
+                    if let id = message.payload.commandID,
+                       let action = pendingActions.removeValue(forKey: id) {
+                        if action == .enableSticks {
+                            virtualSticksEnabled = message.payload.commandAccepted == true
+                        }
+                        if action == .disableSticks || action == .disarmFlight {
+                            virtualSticksEnabled = false
+                        }
+                    }
                     addLog("Command: \(message.payload.message ?? "Unknown response")")
                 case .error:
                     addLog("Bridge error: \(message.payload.message ?? "Unknown")")
@@ -161,6 +174,9 @@ final class BridgeClient: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
+            if command.action != .sticks {
+                pendingActions[command.id] = command.action
+            }
             var data = try encoder.encode(command)
             data.append(0x0A)
             conn.send(content: data, completion: .contentProcessed { [weak self] error in
@@ -177,7 +193,7 @@ final class BridgeClient: ObservableObject {
     /// Releasing it immediately requests neutral velocity and releases the stick timer.
     func startSticks(pitch: Double = 0, roll: Double = 0,
                      yaw: Double = 0, vertical: Double = 0) {
-        guard flightReady else { return }
+        guard flightReady && virtualSticksEnabled else { return }
         stickAxes = (pitch, roll, yaw, vertical)
         sticksTimer?.invalidate()
         emitSticks()
