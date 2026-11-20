@@ -149,85 +149,56 @@ struct FlightCockpitView: View {
         .frame(maxWidth: .infinity).background(Color(white: 0.075))
     }
 
-    // MARK: Full-height satellite map
     private var mapPane: some View {
-        ZStack(alignment: .topLeading) {
-            GroundStationMap(
-                aircraft: aircraftCoordinate,
-                home: homeCoordinate,
-                route: missions.selectedRoute?.waypoints ?? [],
-                flightTrack: track,
-                satellite: satellite,
-                followAircraft: followAircraft)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 7) {
-                    Image(systemName: "map.fill")
-                        .foregroundStyle(green)
-                    Text("MAP")
-                        .tracking(1)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                    Spacer()
-                    Button {
-                        withAnimation(.easeOut(duration: 0.22)) {
-                            mapFocused.toggle()
-                        }
-                    } label: {
-                        Label(mapFocused ? "CAMERA FOCUS" : "MAP FOCUS",
-                              systemImage: "rectangle.split.2x1")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(green)
-                    .help(mapFocused ? "Restore video-focused split view" :
-                                      "Expand map while keeping camera visible")
-                    Rectangle().fill(.white.opacity(0.20))
-                        .frame(width: 1, height: 13)
-                    Text(satellite ? "SATELLITE" : "STANDARD")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-                .padding(.horizontal, 13)
-                .frame(height: 36)
-                .background(.black.opacity(0.79))
-
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        mapTag("AIRCRAFT", aircraftLinked ?
-                               (telemetry?.aircraftModel ?? "CONNECTED") : "NO AIRCRAFT FIX",
-                               icon: "airplane")
-                        if let route = missions.selectedRoute {
-                            mapTag("PLANNED", route.waypointCountLabel.uppercased(),
-                                   icon: "point.topleft.down.curvedto.point.bottomright.up")
-                        }
-                    }
-                    Spacer()
-                    VStack(spacing: 5) {
-                        mapControl("square.3.layers.3d", help: "Toggle satellite map") {
-                            satellite.toggle()
-                        }
-                        mapControl("location.north.line", help: "Follow aircraft position") {
-                            followAircraft.toggle()
-                        }
-                    }
-                }
-                .padding(11)
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Label("Map", systemImage: "map")
                 Spacer()
-                HStack(spacing: 7) {
-                    Image(systemName: "location.fill")
-                        .foregroundStyle(green)
-                    Text(telemetry?.locationText ?? "AIRCRAFT POSITION UNAVAILABLE")
-                        .lineLimit(1)
-                    Spacer()
-                    Text("WGS84")
-                        .foregroundStyle(.white.opacity(0.45))
+                Button {
+                    withAnimation(.easeOut(duration: 0.22)) { mapFocused.toggle() }
+                } label: {
+                    Label(mapFocused ? "Camera focus" : "Map focus", systemImage: "rectangle.split.2x1")
                 }
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 10)
-                .frame(height: 34)
-                .background(.black.opacity(0.77))
+                .buttonStyle(.plain).foregroundStyle(GSPalette.cyan)
+                Text(satellite ? "Satellite" : "Standard").foregroundStyle(GSPalette.muted)
             }
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 10).frame(height: 30).background(GSPalette.side)
+
+            GroundStationMap(aircraft: aircraftCoordinate, home: homeCoordinate,
+                             route: missions.selectedRoute?.waypoints ?? [], flightTrack: track,
+                             satellite: satellite, followAircraft: followAircraft)
+                .overlay(alignment: .topTrailing) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            if let model = telemetry?.aircraftModel {
+                                mapTag("AIRCRAFT", model, icon: "airplane")
+                            }
+                            if let route = missions.selectedRoute {
+                                mapTag("PLANNED", route.waypointCountLabel.uppercased(),
+                                       icon: "point.topleft.down.curvedto.point.bottomright.up")
+                            }
+                        }
+                        Spacer()
+                        VStack(spacing: 4) {
+                            mapControl("square.3.layers.3d", help: "Toggle satellite map") { satellite.toggle() }
+                            mapControl(followAircraft ? "location.fill" : "location",
+                                       help: followAircraft ? "Stop following aircraft" : "Follow aircraft") {
+                                followAircraft.toggle()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8).padding(.top, 40)
+                }
+
+            HStack(spacing: 6) {
+                Image(systemName: "location").foregroundStyle(GSPalette.muted)
+                Text(telemetry?.locationText ?? "Position unavailable").lineLimit(1)
+                Spacer()
+                Text("WGS84").foregroundStyle(GSPalette.muted)
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .padding(.horizontal, 10).frame(height: 23).background(GSPalette.side)
         }
         .clipped()
     }
