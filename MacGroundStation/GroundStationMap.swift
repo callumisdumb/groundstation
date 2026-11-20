@@ -31,6 +31,7 @@ struct GroundStationMap: NSViewRepresentable {
     func makeNSView(context: Context) -> MKMapView {
         let view = MKMapView()
         view.delegate = context.coordinator
+        view.setAccessibilityIdentifier("GroundStationMap")
         view.mapType = satellite ? .hybrid : .standard
         view.showsCompass = true
         view.showsScale = true
@@ -145,6 +146,18 @@ struct GroundStationMap: NSViewRepresentable {
             line.title = name
             view.addOverlay(line)
             return line
+        }
+
+        func mapViewWillStartLoadingMap(_ mapView: MKMapView) {
+            mapView.setAccessibilityValue("Loading map")
+        }
+
+        func mapViewDidFinishRenderingMap(_ mapView: MKMapView, fullyRendered: Bool) {
+            if fullyRendered { mapView.setAccessibilityValue("Map ready") }
+        }
+
+        func mapViewDidFailLoadingMap(_ mapView: MKMapView, withError error: Error) {
+            mapView.setAccessibilityValue("Basemap unavailable")
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {

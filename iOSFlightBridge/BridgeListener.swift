@@ -56,6 +56,8 @@ final class BridgeListener {
                     self.active = conn
                     self.cancelCandidates()
                     self.onReady?(conn)
+                case .waiting(let error):
+                    if case .tls = error { self.close(conn) }
                 case .failed, .cancelled: self.close(conn)
                 default: break
                 }

@@ -63,6 +63,12 @@ final class H264LiveVideoClient: ObservableObject {
                     self.connected = true
                     self.streamStatus = "Video paired · waiting for camera"
                     self.receive(from: conn)
+                case .waiting(let error):
+                    if case .tls = error {
+                        self.close(conn, reason: "Video pairing failed. Check the bridge credentials.")
+                    } else if self.connected {
+                        self.close(conn, reason: "Video link interrupted")
+                    }
                 case .failed(let error):
                     self.close(conn, reason: "Video connection failed: \(error.localizedDescription)")
                 case .cancelled: self.close(conn, reason: "Video disconnected")
@@ -71,6 +77,11 @@ final class H264LiveVideoClient: ObservableObject {
             }
         }
         conn.start(queue: .global(qos: .userInitiated))
+        Task { @MainActor [weak self, weak conn] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard let self, let conn, self.connection === conn, !self.connected else { return }
+            self.close(conn, reason: "Video pairing timed out. Reconnect the bridge to retry.")
+        }
     }
 
     func disconnect() {

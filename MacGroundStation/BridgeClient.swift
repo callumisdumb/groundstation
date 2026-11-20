@@ -5,6 +5,7 @@ import Network
 
 struct GroundStationLogEntry: Identifiable {
     let id = UUID()
+    let time = Date()
     let text: String
 }
 
@@ -39,6 +40,14 @@ final class BridgeClient: ObservableObject {
     private var lastStatusLog = Date.distantPast
     private var sticksTimer: Timer?
     private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
+
+    func aircraftDataAge(at now: Date) -> TimeInterval? {
+        guard let message = latestStatus, let sampledAt = message.payload.aircraftSampledAt,
+              let received = lastTelemetryAt else { return nil }
+        // Both wire timestamps use the iPhone clock. Only local elapsed time
+        // uses the Mac clock, so clock skew cannot turn an old fix into a new one.
+        return max(0, message.timestamp.timeIntervalSince(sampledAt)) + max(0, now.timeIntervalSince(received))
+    }
 
     var djiSimulatorActive: Bool {
         latestStatus?.payload.djiSimulatorActive == true
@@ -138,6 +147,12 @@ final class BridgeClient: ObservableObject {
                     self.addLog("Connected to iPhone bridge")
                     self.receiveNext(from: conn)
                     self.verifyFlightKey()
+                case .waiting(let error):
+                    if case .tls = error {
+                        self.close(conn, reason: "Pairing failed. Check the bridge key and current session code.")
+                    } else if self.connected {
+                        self.close(conn, reason: "Bridge connection interrupted. Reconnect when the network is available.")
+                    }
                 case .failed(let error):
                     self.close(conn, reason: "Connection failed: \(error.localizedDescription)")
                 case .cancelled:
@@ -410,8 +425,7 @@ final class BridgeClient: ObservableObject {
     }
 
     private func addLog(_ entry: String) {
-        let timestamp = Date.now.formatted(date: .omitted, time: .standard)
-        logs.insert(GroundStationLogEntry(text: "[\(timestamp)] \(entry)"), at: 0)
+        logs.insert(GroundStationLogEntry(text: entry), at: 0)
         if logs.count > 100 { logs.removeLast(logs.count - 100) }
     }
 }

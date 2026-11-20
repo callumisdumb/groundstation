@@ -17,6 +17,8 @@ enum ProjectStatus: String {
         else if let received = client.lastTelemetryAt, let p = client.latestStatus?.payload {
             if now.timeIntervalSince(received) > 3 { self = .stale }
             else if p.simulated == true { self = .demo }
+            else if p.validAircraft && p.aircraftSampledAt == nil { self = .waiting }
+            else if p.validAircraft && (client.aircraftDataAge(at: now) ?? .infinity) > 3 { self = .stale }
             else if p.djiSimulatorActive == true { self = .simulator }
             else if p.validAircraft { self = .aircraft }
             else { self = .bridge }

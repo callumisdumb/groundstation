@@ -3,6 +3,7 @@ import XCTest
 final class WorkspaceTests: XCTestCase {
     func testProjectRoutesAndCockpit() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["--temporary-route-library", "-GroundStationCallSign", "Local operator"]
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15))
@@ -16,7 +17,6 @@ final class WorkspaceTests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         app.buttons["nav-Flight Route Library"].click()
         XCTAssertTrue(app.staticTexts["Route Library"].waitForExistence(timeout: 5))
-        attach(window, "02-route-library")
         app.buttons["Create route"].firstMatch.click()
         let field = app.textFields["Latitude (−90 to 90)"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -27,8 +27,14 @@ final class WorkspaceTests: XCTestCase {
         longitude.typeText("-3")
         app.buttons["Add waypoint"].click()
         XCTAssertTrue(app.staticTexts["Waypoints (1)"].waitForExistence(timeout: 5))
+        let map = app.descendants(matching: .any).matching(identifier: "GroundStationMap").firstMatch
+        let rendered = expectation(for: NSPredicate(format: "value == %@", "Map ready"), evaluatedWith: map)
+        // MapKit tile availability is external; capture the actual native state in either case.
+        _ = XCTWaiter.wait(for: [rendered], timeout: 12)
         attach(window, "03-waypoint-editor")
         app.buttons["Back to Route Library"].click()
+        XCTAssertTrue(app.buttons["Edit New flight route"].waitForExistence(timeout: 5))
+        attach(window, "02-route-library")
         app.buttons["Close route library"].click()
         app.buttons["nav-Virtual Cockpit"].click()
         XCTAssertTrue(app.staticTexts["No live video"].waitForExistence(timeout: 5))

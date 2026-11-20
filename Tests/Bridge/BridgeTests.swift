@@ -70,8 +70,9 @@ final class BridgeTests: XCTestCase {
                     XCTAssertEqual(response, data)
                     outcome.fulfill()
                 }
-            case .failed:
-                XCTAssertFalse(shouldPair)
+            case .waiting(let error), .failed(let error):
+                XCTAssertFalse(shouldPair, "Unexpected handshake failure: \(error)")
+                connection.cancel()
                 outcome.fulfill()
             default: break
             }

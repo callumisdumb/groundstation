@@ -104,7 +104,7 @@ struct MissionWorkspace: View {
                 Divider()
                 VStack(spacing: 0) {
                     HStack(spacing: 10) {
-                        Button { missions.newRoute(); openEditor() } label: {
+                        Button { if missions.newRoute() { openEditor() } } label: {
                             Image(systemName: "plus").fontWeight(.semibold)
                         }
                         .buttonStyle(.borderedProminent).accessibilityLabel("Create route").help("Create route")
@@ -122,7 +122,7 @@ struct MissionWorkspace: View {
                             Image(systemName: "folder").font(.system(size: 29, weight: .light))
                             Text(search.isEmpty ? "No flight routes" : "No matching routes").font(.headline)
                             if search.isEmpty {
-                                Button("Create route") { missions.newRoute(); openEditor() }
+                                Button("Create route") { if missions.newRoute() { openEditor() } }
                             }
                         }.foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -169,7 +169,7 @@ struct MissionWorkspace: View {
                     Text((route.updatedAt ?? route.createdAt).formatted(date: .numeric, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plain).accessibilityLabel("Edit \(route.name)")
             Menu {
                 Button("Edit route") { missions.selectedID = route.id; openEditor() }
                 Button("Delete route", role: .destructive) { deletion = route }

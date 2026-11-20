@@ -171,7 +171,7 @@ struct ProjectWorkspace: View {
                 Text(String(count)).foregroundStyle(GSPalette.muted).monospacedDigit()
             }
             .padding(.horizontal, 10).frame(height: 31).background(GSPalette.raised)
-            .overlay(alignment: .bottom) { Divider() }
+            .overlay(alignment: .bottom) { Rectangle().fill(GSPalette.border).frame(height: 1) }
         }
         .buttonStyle(.plain).font(.system(size: 12))
         .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")

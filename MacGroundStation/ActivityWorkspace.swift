@@ -2,50 +2,60 @@ import SwiftUI
 
 struct ActivityWorkspace: View {
     @ObservedObject var client: BridgeClient
+    @State private var query = ""
+    @State private var confirmingClear = false
+
+    private var events: [GroundStationLogEntry] {
+        client.logs.filter { query.isEmpty || $0.text.localizedCaseInsensitiveContains(query) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Session activity")
-                        .font(.system(size: 19, weight: .bold))
-                    Text("Connection lifecycle, telemetry updates, DJI command results")
-                        .font(.caption).foregroundStyle(GSPalette.muted)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Label("Session activity", systemImage: "list.bullet.rectangle")
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
-                GSStatusChip(label: client.connected ? "BRIDGE LIVE" : "BRIDGE OFFLINE",
-                             kind: client.connected ? .good : .caution)
-                Button("Clear display") { client.logs.removeAll() }
+                TextField("Search activity", text: $query).textFieldStyle(.roundedBorder).frame(width: 180)
+                Button("Clear display") { confirmingClear = true }.disabled(client.logs.isEmpty)
             }
-            GSPanel("System event log", icon: "list.bullet.rectangle") {
+            .padding(.horizontal, 12).frame(height: 43).background(GSPalette.side)
+            Divider()
+            HStack {
+                Text("Time").frame(width: 90, alignment: .leading)
+                Text("Event")
+                Spacer()
+                Text("\(events.count)").monospacedDigit()
+            }
+            .padding(.horizontal, 14).frame(height: 30)
+            .font(.system(size: 12, weight: .medium)).background(GSPalette.raised)
+            if events.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock").font(.title2)
+                    Text(query.isEmpty ? "No events in this session" : "No matching events")
+                        .font(.callout)
+                }.foregroundStyle(GSPalette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 9) {
-                        ForEach(client.logs) { event in
-                            HStack(alignment: .top, spacing: 9) {
-                                Image(systemName: event.text.contains("failed") ||
-                                      event.text.contains("error") ?
-                                      "exclamationmark.triangle" : "circle.dotted")
-                                    .foregroundStyle(event.text.contains("error") ?
-                                                     GSPalette.amber : GSPalette.cyan)
-                                Text(event.text)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(events) { event in
+                            HStack(alignment: .top) {
+                                Text(event.time.formatted(date: .omitted, time: .standard))
+                                    .monospacedDigit().foregroundStyle(GSPalette.muted)
+                                    .frame(width: 90, alignment: .leading)
+                                Text(event.text).textSelection(.enabled)
+                                Spacer()
                             }
-                            Divider().overlay(GSPalette.border)
-                        }
-                        if client.logs.isEmpty {
-                            Text("No events recorded in this session.")
-                                .foregroundStyle(GSPalette.muted)
+                            .font(.system(size: 12)).padding(.horizontal, 14).padding(.vertical, 8)
+                            Divider()
                         }
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Text("Logs shown here are session-only; this prototype does not yet provide persistent flight-log archiving or synchronized video playback.")
-                .font(.caption).foregroundStyle(GSPalette.muted)
         }
-        .padding(16)
-        .background(GSPalette.background)
+        .background(GSPalette.panel)
+        .confirmationDialog("Clear this session’s activity?", isPresented: $confirmingClear, titleVisibility: .visible) {
+            Button("Clear display", role: .destructive) { client.logs.removeAll() }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }

@@ -35,55 +35,81 @@ final class MissionLibrary: ObservableObject {
         routes.first { $0.id == selectedID }
     }
 
-    init() {
-        load()
-        if selectedID == nil { selectedID = routes.first?.id }
+    private let storageURL: URL?
+    private var loadFailure: String?
+
+    convenience init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--temporary-route-library") {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            self.init(storageURL: root.appendingPathComponent("routes.json"))
+            return
+        }
+        #endif
+        self.init(storageURL: Self.saveURL)
     }
 
-    func newRoute(name: String = "New flight route") {
-        let route = MissionRoute(name: name)
-        routes.append(route)
-        selectedID = route.id
-        persist()
+    init(storageURL: URL?) {
+        self.storageURL = storageURL
+        guard let storageURL else {
+            loadFailure = "Application Support is unavailable."
+            lastError = loadFailure
+            return
+        }
+        do {
+            routes = try JSONDecoder().decode([MissionRoute].self, from: Data(contentsOf: storageURL))
+            selectedID = routes.first?.id
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            // First launch has no library yet.
+        } catch {
+            loadFailure = "Could not read the saved routes. Restore mission-routes.json and reopen GroundStation."
+            lastError = loadFailure
+        }
+    }
+
+    @discardableResult
+    func newRoute(name: String = "New flight route") -> Bool {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route = MissionRoute(name: title.isEmpty ? "Untitled route" : title)
+        return persist(routes + [route], selection: route.id)
     }
 
     func renameSelected(_ name: String) {
-        guard let i = selectedIndex, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        routes[i].name = name.trimmingCharacters(in: .whitespaces)
-        routes[i].updatedAt = Date()
-        persist()
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        updateSelected { $0.name = title }
     }
 
     func removeSelected() {
         guard let i = selectedIndex else { return }
-        routes.remove(at: i)
-        selectedID = routes.first?.id
-        persist()
+        var next = routes
+        next.remove(at: i)
+        persist(next, selection: next.first?.id)
     }
 
-    func addWaypoint(latitude: Double, longitude: Double,
-                     altitudeMeters: Double) {
-        guard let i = selectedIndex,
-              latitude.isFinite, longitude.isFinite, altitudeMeters.isFinite,
+    func addWaypoint(latitude: Double, longitude: Double, altitudeMeters: Double) {
+        guard latitude.isFinite, longitude.isFinite, altitudeMeters.isFinite,
               (-90...90).contains(latitude), (-180...180).contains(longitude),
               (0...500).contains(altitudeMeters) else {
             lastError = "Check latitude, longitude and altitude (0–500 m)"
             return
         }
-        lastError = nil
-        routes[i].updatedAt = Date()
-        let number = routes[i].waypoints.count + 1
-        routes[i].waypoints.append(MissionWaypoint(
-            label: "Waypoint \(number)",
-            latitude: latitude, longitude: longitude, altitudeMeters: altitudeMeters))
-        persist()
+        updateSelected { route in
+            route.waypoints.append(MissionWaypoint(label: "Waypoint \(route.waypoints.count + 1)",
+                                                   latitude: latitude, longitude: longitude, altitudeMeters: altitudeMeters))
+        }
     }
 
     func deleteWaypoint(id: UUID) {
+        updateSelected { route in route.waypoints.removeAll { $0.id == id } }
+    }
+
+    private func updateSelected(_ change: (inout MissionRoute) -> Void) {
         guard let i = selectedIndex else { return }
-        routes[i].updatedAt = Date()
-        routes[i].waypoints.removeAll { $0.id == id }
-        persist()
+        var next = routes
+        change(&next[i])
+        next[i].updatedAt = Date()
+        persist(next, selection: selectedID)
     }
 
     /// GeoJSON export works with GIS tools, but does not imply that the Mavic
@@ -124,23 +150,23 @@ final class MissionLibrary: ObservableObject {
             .appendingPathComponent("mission-routes.json")
     }
 
-    private func persist() {
-        guard let url = Self.saveURL else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(routes)
-            try data.write(to: url, options: .atomic)
-            lastError = nil
-        } catch {
-            lastError = "Couldn't save route: \(error.localizedDescription)"
+    @discardableResult
+    private func persist(_ next: [MissionRoute], selection: UUID?) -> Bool {
+        guard let url = storageURL, loadFailure == nil else {
+            lastError = loadFailure
+            return false
         }
-    }
-
-    private func load() {
-        guard let url = Self.saveURL,
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([MissionRoute].self, from: data) else { return }
-        routes = decoded
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(next).write(to: url, options: .atomic)
+            routes = next
+            selectedID = selection
+            lastError = nil
+            return true
+        } catch {
+            lastError = "Could not save routes: \(error.localizedDescription)"
+            return false
+        }
     }
 }

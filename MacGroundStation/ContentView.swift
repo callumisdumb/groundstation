@@ -182,7 +182,7 @@ struct ContentView: View {
             track.removeAll()
             trackSource = source
         }
-        guard let point = payload.aircraftPoint else { return }
+        guard (client.aircraftDataAge(at: Date()) ?? .infinity) <= 3, let point = payload.aircraftPoint else { return }
         if let last = track.last, last.latitude == point.latitude && last.longitude == point.longitude { return }
         track.append(point)
         if track.count > 400 { track.removeFirst(track.count - 400) }

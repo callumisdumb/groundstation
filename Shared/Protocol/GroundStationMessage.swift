@@ -16,6 +16,8 @@ struct GroundStationMessage: Codable {
         var deviceName: String? = nil
         var connectionState: String? = nil
         var aircraftModel: String? = nil
+        /// Set only by a flight-controller callback, in the bridge clock domain.
+        var aircraftSampledAt: Date? = nil
         var aircraftConnected: Bool? = nil
         var controllerConnected: Bool? = nil
         var batteryPercent: Int? = nil
