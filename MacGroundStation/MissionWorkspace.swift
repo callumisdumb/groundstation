@@ -162,7 +162,7 @@ struct MissionWorkspace: View {
                         .background(Color(red: 0.07, green: 0.15, blue: 0.34))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(route.name).fontWeight(.semibold).lineLimit(1)
-                        Text("\(route.waypoints.count) waypoints  ·  Mavic Pro")
+                        Text("\(route.waypointCountLabel)  ·  Mavic Pro")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

@@ -198,7 +198,7 @@ struct FlightCockpitView: View {
                                (telemetry?.aircraftModel ?? "CONNECTED") : "NO AIRCRAFT FIX",
                                icon: "airplane")
                         if let route = missions.selectedRoute {
-                            mapTag("PLANNED", "\(route.waypoints.count) WAYPOINTS",
+                            mapTag("PLANNED", route.waypointCountLabel.uppercased(),
                                    icon: "point.topleft.down.curvedto.point.bottomright.up")
                         }
                     }

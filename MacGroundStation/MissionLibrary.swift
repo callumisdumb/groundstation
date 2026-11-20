@@ -23,6 +23,10 @@ struct MissionRoute: Identifiable, Codable {
     var createdAt = Date()
     var updatedAt: Date?
     var waypoints: [MissionWaypoint] = []
+
+    var waypointCountLabel: String {
+        waypoints.count == 1 ? "1 waypoint" : "\(waypoints.count) waypoints"
+    }
 }
 
 @MainActor
