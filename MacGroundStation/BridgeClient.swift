@@ -66,22 +66,20 @@ final class BridgeClient: ObservableObject {
               latestStatus?.payload.simulated == false,
               latestStatus?.payload.controllerConnected == true,
               let p = latestStatus?.payload,
-              let timestamp = lastTelemetryAt,
-              Date().timeIntervalSince(timestamp) < 1.5 else { return false }
+              let age = aircraftDataAge(at: Date()), age < 1.5 else { return false }
         return p.aircraftModel?.lowercased().contains("mavic pro") == true &&
             p.isFlying == false && p.motorsOn == false &&
             (p.batteryPercent ?? 0) >= 40 &&
             (p.satelliteCount ?? 0) >= 10 &&
             p.homeLocationSet == true && p.imuPreheating == false &&
-            p.latitude != nil && p.longitude != nil
+            p.aircraftPoint != nil
     }
 
     var flightReady: Bool {
         guard connected, flightKeyVerified,
               latestStatus?.payload.aircraftConnected == true,
               latestStatus?.payload.simulated == false,
-              let timestamp = lastTelemetryAt,
-              Date().timeIntervalSince(timestamp) < 2.5,
+              let age = aircraftDataAge(at: Date()), age < 2.5,
               !pairingCode.isEmpty else { return false }
 
         if djiSimulatorActive { return true }

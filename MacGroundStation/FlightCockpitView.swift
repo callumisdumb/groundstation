@@ -91,6 +91,9 @@ struct FlightCockpitView: View {
             if let action = actionToConfirm {
                 Button(confirmTitle(action)) {
                     guard client.connected, action != .authorizeLiveFlight || liveChecklistReady else { return }
+                    if action == .takeoff {
+                        guard client.flightReady, client.flightArmed, telemetry?.isFlying == false else { return }
+                    }
                     if action == .land || action == .returnHome ||
                        action == .stopDJISimulator || action == .revokeLiveFlight {
                         keyboard.keyboardEnabled = false
@@ -542,12 +545,12 @@ struct FlightCockpitView: View {
                 Button("Arm (30s)") {
                     client.send(.armFlight)
                 }
-                .disabled(!client.flightReady || telemetry?.isFlying == true)
+                .disabled(!client.flightReady || telemetry?.isFlying != false)
                 Button("Take off") {
                     actionToConfirm = .takeoff
                 }
                 .disabled(!client.flightReady || !client.flightArmed ||
-                          telemetry?.isFlying == true)
+                          telemetry?.isFlying != false)
             }
             .controlSize(.small)
 
