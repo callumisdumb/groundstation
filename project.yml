@@ -57,6 +57,14 @@ targets:
       base:
         TEST_TARGET_NAME: MacGroundStation
 schemes:
+  MacGroundStation:
+    build:
+      targets:
+        MacGroundStation: all
+  iOSFlightBridge:
+    build:
+      targets:
+        iOSFlightBridge: all
   GroundStationReview:
     build:
       targets:
