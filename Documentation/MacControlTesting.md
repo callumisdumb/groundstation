@@ -13,11 +13,11 @@ The Mac talks to the iPhone over a trusted LAN.
 - GPS coordinates, altitude, velocity, motor status, flight mode, pitch/roll/yaw,
   satellites, IMU preheat, flight duration and home point
 - Mac gimbal pitch preset controls and photo/video camera commands
-- DJIWidget iOS decoding and low-rate JPEG snapshots sent to the Mac (experimental)
+- DJIWidget iOS preview and a separate H.264 relay to the Mac (experimental)
 - Unique system log IDs (fixes SwiftUI ForEach duplicate-ID warnings)
 - Clear error reporting and reconnect workflow after iPhone TCP reset
 - Mac-side flight UI scaffolding with hold-to-move directions and safety confirmations
-- Six-digit pairing code displayed on iPhone and entered on Mac
+- Authenticated telemetry and video sessions using the bridge key and a current six-digit code
 
 ### Experimental LIVE mode — explicit authorization required
 
@@ -27,19 +27,18 @@ The Mac talks to the iPhone over a trusted LAN.
 - The live camera is not a certified low-latency piloting link.
 - Read [LiveFlight.md](LiveFlight.md) for current operating conditions.
 
-## How to test locally (same branch; do not switch)
+## How to test locally
 
 On your Mac, from the \`groundstation\` repository:
 
 \`\`\`bash
-git pull origin feature/dji-v4-readonly
 xcodegen generate
 pod install
 open MavicGroundStation.xcworkspace
 \`\`\`
 
 Rebuild **both** Xcode schemes (MacGroundStation and iOSFlightBridge).
-Enter the iPhone's Wi-Fi address and the new six-digit pairing code in the Mac app.
+Use the iPhone address, current code and bridge key. [Pair the bridge](../README.md#pair-the-bridge)
 The code changes on each iPhone bridge app restart; entering it on the Mac does not
 require operating flight controls on the phone.
 
@@ -58,8 +57,7 @@ to relink the aircraft, then close it before launching Flight Bridge.
 ### Camera preview troubleshooting
 
 The current preview uses DJIWidget 1.6.8 and DJIVideoPreviewer on the iPhone.
-The video feed is decoded there, sampled at a low rate, and sent to the Mac as JPEG
-in the existing TCP stream. First confirm the iPhone has a camera image.
+The iPhone also forwards compressed H.264 to the Mac on the paired video channel. First confirm the iPhone has a camera image.
 
 If nothing appears:
 1. Confirm the Mac reports a **real** aircraft link, not Only RemoteController.
@@ -112,7 +110,7 @@ system is suitable for live aviation operations.
 1. Remove the Mavic Pro's propellers; link controller + aircraft.
 2. Install and run the updated iPhone bridge and keep it open (screen stays awake).
 3. Start the Mac GroundStation app, connect to iPhone IP on port 8765 and
-   enter the six-digit pairing code.
+   enter the current code and bridge key.
 4. In the Mac connection popover, paste the iPhone's flight key, save and verify it.
 5. Open **Virtual Cockpit → Control** from the video tool rail or
    **Simulator / Controls** from the bottom deck.

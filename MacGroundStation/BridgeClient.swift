@@ -5,16 +5,25 @@ import Network
 
 struct GroundStationLogEntry: Identifiable {
     let id = UUID()
+    let time = Date()
     let text: String
 }
 
 @MainActor
 final class BridgeClient: ObservableObject {
+    @Published private(set) var connecting = false
+    @Published private(set) var connectionStatus = "Offline"
     @Published private(set) var connected = false
     @Published private(set) var virtualSticksEnabled = false
     @Published private(set) var flightKeyVerified = false
     @Published private(set) var liveFlightAcknowledged = false
     @Published var flightKeyInput = FlightKeyStore.load() ?? ""
+    @Published var bridgeKeyInput = FlightKeyStore.load(account: "bridge-key") ?? ""
+    var bridgeKey: String? {
+        let entered = bridgeKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !entered.isEmpty { return FlightSecurity.validKey(entered) ? entered : nil }
+        return BridgeTransport.bridgeKey(fromFlightKey: flightKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
     @Published private(set) var lastControlResult = "No flight commands sent"
     @Published private(set) var latestStatus: GroundStationMessage?
     @Published private(set) var latestFrame: NSImage?
@@ -31,6 +40,14 @@ final class BridgeClient: ObservableObject {
     private var lastStatusLog = Date.distantPast
     private var sticksTimer: Timer?
     private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
+
+    func aircraftDataAge(at now: Date) -> TimeInterval? {
+        guard let message = latestStatus, let sampledAt = message.payload.aircraftSampledAt,
+              let received = lastTelemetryAt else { return nil }
+        // Both wire timestamps use the iPhone clock. Only local elapsed time
+        // uses the Mac clock, so clock skew cannot turn an old fix into a new one.
+        return max(0, message.timestamp.timeIntervalSince(sampledAt)) + max(0, now.timeIntervalSince(received))
+    }
 
     var djiSimulatorActive: Bool {
         latestStatus?.payload.djiSimulatorActive == true
@@ -49,22 +66,20 @@ final class BridgeClient: ObservableObject {
               latestStatus?.payload.simulated == false,
               latestStatus?.payload.controllerConnected == true,
               let p = latestStatus?.payload,
-              let timestamp = lastTelemetryAt,
-              Date().timeIntervalSince(timestamp) < 1.5 else { return false }
+              let age = aircraftDataAge(at: Date()), age < 1.5 else { return false }
         return p.aircraftModel?.lowercased().contains("mavic pro") == true &&
             p.isFlying == false && p.motorsOn == false &&
             (p.batteryPercent ?? 0) >= 40 &&
             (p.satelliteCount ?? 0) >= 10 &&
             p.homeLocationSet == true && p.imuPreheating == false &&
-            p.latitude != nil && p.longitude != nil
+            p.aircraftPoint != nil
     }
 
     var flightReady: Bool {
         guard connected, flightKeyVerified,
               latestStatus?.payload.aircraftConnected == true,
               latestStatus?.payload.simulated == false,
-              let timestamp = lastTelemetryAt,
-              Date().timeIntervalSince(timestamp) < 2.5,
+              let age = aircraftDataAge(at: Date()), age < 2.5,
               !pairingCode.isEmpty else { return false }
 
         if djiSimulatorActive { return true }
@@ -99,21 +114,43 @@ final class BridgeClient: ObservableObject {
     func connect(host: String, port: UInt16) {
         disconnect()
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let nwPort = NWEndpoint.Port(rawValue: port) else {
-            addLog("Enter a valid iPhone IP address")
+        guard !trimmed.isEmpty, let nwPort = NWEndpoint.Port(rawValue: port),
+              let bridgeKey, let parameters = BridgeTransport.parameters(key: bridgeKey, code: pairingCode, channel: .telemetry)
+        else {
+            connectionStatus = "Check the address, six-digit code and bridge key."
+            addLog(connectionStatus)
             return
         }
-        let conn = NWConnection(host: NWEndpoint.Host(trimmed), port: nwPort, using: .tcp)
+        if !bridgeKeyInput.isEmpty && !FlightKeyStore.save(bridgeKey, account: "bridge-key") {
+            connectionStatus = "Could not save the bridge key in Keychain."
+            addLog(connectionStatus)
+            return
+        }
+        let conn = NWConnection(host: NWEndpoint.Host(trimmed), port: nwPort, using: parameters)
+        connecting = true
+        connectionStatus = "Pairing with iPhone…"
         connection = conn
         conn.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 guard let self, self.connection === conn else { return }
                 switch state {
                 case .ready:
+                    guard BridgeTransport.authenticated(conn) else {
+                        self.close(conn, reason: "Bridge authentication failed")
+                        return
+                    }
+                    self.connecting = false
+                    self.connectionStatus = "Paired"
                     self.connected = true
                     self.addLog("Connected to iPhone bridge")
                     self.receiveNext(from: conn)
                     self.verifyFlightKey()
+                case .waiting(let error):
+                    if case .tls = error {
+                        self.close(conn, reason: "Pairing failed. Check the bridge key and current session code.")
+                    } else if self.connected {
+                        self.close(conn, reason: "Bridge connection interrupted. Reconnect when the network is available.")
+                    }
                 case .failed(let error):
                     self.close(conn, reason: "Connection failed: \(error.localizedDescription)")
                 case .cancelled:
@@ -123,6 +160,11 @@ final class BridgeClient: ObservableObject {
             }
         }
         conn.start(queue: .global(qos: .userInitiated))
+        Task { @MainActor [weak self, weak conn] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard let self, let conn, self.connection === conn, self.connecting else { return }
+            self.close(conn, reason: "Pairing timed out. Check the address, keys and current code.")
+        }
         addLog("Connecting to \(trimmed):\(port)…")
     }
 
@@ -137,7 +179,10 @@ final class BridgeClient: ObservableObject {
         sticksTimer = nil
         connection = nil
         conn.cancel()
+        connecting = false
         connected = false
+        connectionStatus = reason
+        lastControlResult = "No flight commands sent"
         virtualSticksEnabled = false
         flightKeyVerified = false
         liveFlightAcknowledged = false
@@ -287,9 +332,6 @@ final class BridgeClient: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            if command.action != .sticks {
-                pendingActions[command.id] = command.action
-            }
             let outgoing: Data
             if command.action.requiresEncryptedFlightLink {
                 guard let protected = FlightSecurity.seal(command, key: flightKeyInput) else {
@@ -300,11 +342,21 @@ final class BridgeClient: ObservableObject {
             } else {
                 outgoing = try encoder.encode(command)
             }
+            if command.action != .sticks {
+                guard pendingActions.count < 256 else {
+                    close(conn, reason: "Bridge stopped acknowledging commands. Reconnect to continue.")
+                    return
+                }
+                pendingActions[command.id] = command.action
+            }
             var data = outgoing
             data.append(0x0A)
             conn.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
-                    Task { @MainActor in self?.addLog("Command send failed: \(error.localizedDescription)") }
+                    Task { @MainActor in
+                        guard let self, self.connection === conn else { return }
+                        self.close(conn, reason: "Command send failed: \(error.localizedDescription)")
+                    }
                 }
             })
         } catch {
@@ -371,8 +423,7 @@ final class BridgeClient: ObservableObject {
     }
 
     private func addLog(_ entry: String) {
-        let timestamp = Date.now.formatted(date: .omitted, time: .standard)
-        logs.insert(GroundStationLogEntry(text: "[\(timestamp)] \(entry)"), at: 0)
+        logs.insert(GroundStationLogEntry(text: entry), at: 0)
         if logs.count > 100 { logs.removeLast(logs.count - 100) }
     }
 }

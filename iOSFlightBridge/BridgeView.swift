@@ -1,95 +1,114 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct BridgeView: View {
     @StateObject private var server = BridgeServer()
-    @State private var showFlightKey = false
-    @State private var copiedKey = false
+    @Environment(\.scenePhase) private var phase
+    @State private var listeningRequested = true
+    @State private var showFlightSetup = false
+    @State private var revealFlightKey = false
+    @State private var confirmRotation = false
+    @State private var copyNotice: String?
+    @State private var copyTime = Date.distantPast
+    private let blue = Color(red: 0.17, green: 0.42, blue: 0.94)
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Mavic Flight Bridge", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.title2.bold())
-                Text("Mac-controlled communications relay. Leave this app open with the iPhone connected to the remote controller.")
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "square.grid.2x2.fill")
+                Text("GroundStation").font(.headline)
+                Spacer()
+                Label(server.running ? "Listening" : "Stopped",
+                      systemImage: server.running ? "antenna.radiowaves.left.and.right" : "pause.circle")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Label("Screen stays awake while Flight Bridge is active", systemImage: "sun.max")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                GroupBox("Pair with Mac") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(server.pairingCode)
-                            .font(.system(size: 36, weight: .bold, design: .monospaced))
-                            .textSelection(.enabled)
-                        Text("Enter this code on the Mac. No flight controls are on this phone.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding().background(Color(red: 0.116, green: 0.215, blue: 0.688))
+            List {
+                Section {
+                    LabeledContent("Device", value: "iPhone bridge")
+                    LabeledContent("Wi-Fi address", value: server.running ? (server.localAddress ?? "Wi-Fi unavailable") : "—")
+                    if phase == .active, server.running {
+                        LabeledContent("Session code") {
+                            Text(server.pairingCode).font(.title2.bold().monospacedDigit()).privacySensitive()
+                        }
+                    }
+                    Button { copy(server.bridgeKey, name: "Bridge key") } label: {
+                        Label("Copy bridge key for Mac", systemImage: "doc.on.doc")
+                    }.disabled(server.bridgeKey.isEmpty || !server.running)
+                } header: {
+                    Text("Ground Station")
+                } footer: {
+                    Text("On the Mac, open Connect bridge. Enter the Wi-Fi address, session code and bridge key.")
                 }
-                GroupBox("Encrypted Mac flight-control pairing") {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Label("256-bit flight key · one-time setup", systemImage: "lock.shield.fill")
-                            .font(.subheadline.weight(.semibold))
-                        Text("Copy this key once to the Mac's Connect panel. The key is stored in both devices' Keychains and is never sent over the Wi-Fi link.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if showFlightKey {
-                            Text(server.flightAccessKey)
-                                .font(.system(size: 12, design: .monospaced))
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                Section("Aircraft") {
+                    Label(server.djiStatus, systemImage: "airplane").font(.subheadline)
+                    DJIFramePreviewSurface().frame(height: 140)
+                        .listRowInsets(EdgeInsets())
+                        .accessibilityLabel("Aircraft camera decoder")
+                }
+                Section("Connection") {
+                    Text(server.lastEvent).font(.callout).foregroundStyle(.secondary)
+                    Button(server.running ? "Stop bridge" : "Start bridge") {
+                        if server.running {
+                            listeningRequested = false
+                            server.stop()
                         } else {
-                            Text("••••••••••••••••••••••••••••••••")
-                                .font(.system(size: 13, design: .monospaced))
-                        }
-                        HStack {
-                            Button {
-                                UIPasteboard.general.string = server.flightAccessKey
-                                copiedKey = true
-                            } label: {
-                                Label(copiedKey ? "Copied" : "Copy flight key",
-                                      systemImage: copiedKey ? "checkmark" : "doc.on.doc")
-                            }
-                            .disabled(server.flightAccessKey.isEmpty)
-                            Button(showFlightKey ? "Hide" : "Reveal") {
-                                showFlightKey.toggle()
-                            }
-                        }
-                        Text("Keep this key private. Flight commands stay locked until the Mac verifies it.")
-                            .font(.caption2).foregroundStyle(.orange)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
-                GroupBox("Network server") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Status", value: server.running ? "Listening" : "Stopped")
-                        LabeledContent("Address", value: server.localAddress ?? "Finding Wi-Fi address…")
-                        LabeledContent("Telemetry / commands", value: "8765")
-                        LabeledContent("Live H.264 video", value: "8766")
-                        Button(server.running ? "Stop" : "Start") {
-                            server.running ? server.stop() : server.start()
+                            listeningRequested = true
+                            server.start()
                         }
                     }
                 }
-                GroupBox("DJI link") {
-                    Text(server.djiStatus).font(.headline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                GroupBox("DJI camera decoder (relay source)") {
-                    DJIFramePreviewSurface()
-                        .frame(height: 155)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(alignment: .bottomLeading) {
-                            Text("H.264 forwarded continuously to Mac on port 8766")
-                                .font(.system(size: 9))
-                                .padding(6)
-                                .background(.black.opacity(0.7))
+                Section {
+                    DisclosureGroup("Flight-control pairing", isExpanded: $showFlightSetup) {
+                        Text("The flight key is a separate credential for the Mac cockpit. Share it only with the operator.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Button("Copy flight key for Mac") { copy(server.flightAccessKey, name: "Flight key") }
+                            .disabled(server.flightAccessKey.isEmpty)
+                        Button(revealFlightKey ? "Hide flight key" : "Reveal flight key") { revealFlightKey.toggle() }
+                        if revealFlightKey && phase == .active {
+                            Text(server.flightAccessKey).font(.caption.monospaced())
+                                .textSelection(.enabled).privacySensitive()
                         }
+                        Button("Reset paired keys", role: .destructive) { confirmRotation = true }
+                    }
+                } footer: {
+                    Text("Copy for Mac uses the system clipboard, including Universal Clipboard when enabled. Copied keys expire after 60 seconds.")
                 }
-                Text(server.lastEvent).font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }.padding(16)
+                if let copyNotice, phase == .active {
+                    TimelineView(.periodic(from: .now, by: 1)) { clock in
+                        if clock.date.timeIntervalSince(copyTime) < 60 {
+                            Text(copyNotice).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .confirmationDialog("Reset paired keys?", isPresented: $confirmRotation, titleVisibility: .visible) {
+                Button("Disconnect and reset keys", role: .destructive) {
+                    revealFlightKey = false
+                    copyNotice = nil
+                    server.resetPairing(restart: listeningRequested)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This disconnects the Mac and invalidates both saved keys. Pair each Mac again.")
+            }
         }
-        .onAppear { server.start() }
+        .preferredColorScheme(.dark).tint(blue)
+        .onAppear { if listeningRequested { server.start() } }
         .onDisappear { server.stop() }
+        .onChange(of: phase) { next in
+            if next != .active { revealFlightKey = false; showFlightSetup = false }
+            if next == .background { server.stop() }
+            if next == .active && listeningRequested { server.start() }
+        }
+    }
+
+    private func copy(_ key: String, name: String) {
+        guard !key.isEmpty else { return }
+        copyTime = Date()
+        UIPasteboard.general.setItems([[UTType.plainText.identifier: key]],
+                                     options: [.expirationDate: copyTime.addingTimeInterval(60)])
+        copyNotice = "\(name) copied for 60 seconds."
     }
 }

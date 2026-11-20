@@ -81,15 +81,8 @@ The \`Podfile\` pins \`DJI-SDK-iOS\` v4.16.2. If this old SDK fails to compile o
 6. Look for DJI SDK registered / DJI aircraft connected on the iPhone.
 7. Connect the Mac dashboard to the iPhone IP as before. It should show read-only GPS, altitude, speed and battery **only after real DJI callbacks arrive**.
 
-The bridge's port \`8765\` is unencrypted and unauthenticated: **LAN test only, never port-forward**.
+Pair both apps with the address, bridge key and current session code. [Pairing instructions](../README.md#pair-the-bridge)
 
-## What has NOT been implemented
+## Hardware validation
 
-- Camera video stream
-- Gimbal and camera controls
-- Waypoint missions
-- Virtual sticks, takeoff/landing, return-to-home
-- Remote internet control
-- Flight failsafe validation
-
-Keep the physical controller and DJI failsafes in normal operation. Do not fly using this code. Check applicable UK CAA flight rules.
+The branch contains a DJI SDK adapter, H.264 relay and gated experimental controls. The macOS CI runner compiles the no-pods targets. Real-device SDK compatibility, video latency and physical controller takeover still require hardware testing. Routes are local drafts. [Hardware test plan](TestingPlan.md)

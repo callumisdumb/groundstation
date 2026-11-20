@@ -3,11 +3,11 @@ import SwiftUI
 @main
 struct MacGroundStationApp: App {
     var body: some Scene {
-        WindowGroup {
+        Window("GroundStation", id: "project") {
             ContentView()
-                .frame(minWidth: 1080, minHeight: 760)
-                .preferredColorScheme(.dark)
+                .frame(minWidth: 960, minHeight: 580)
         }
+        .defaultSize(width: 1320, height: 800)
         .windowStyle(.titleBar)
     }
 }

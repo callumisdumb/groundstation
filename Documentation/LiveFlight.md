@@ -85,9 +85,7 @@ removed.** Removing propellers is only for simulator and non-flight tests.
   compiled or flight-tested by automated CI. CI builds the non-SDK scaffold.
 - No guarantee of physical-RC takeover on Wi-Fi failure or iPhone crash
   until proven in model-specific supervised tests.
-- Current macOS ↔ iPhone uses protected AES-GCM flight command packets but
-  plaintext telemetry/video. It is *not* a full TLS system. Do not expose
-  ports 8765 or 8766 to the public internet or untrusted networks.
+- Both app targets must use the same paired TLS protocol. Each protected flight command also requires the separate AES-GCM flight key. The static PSK transport is intended for a local network. [Transport review](WorkspaceReview.md#trust-boundary)
 - The flight-video latency, high frame rate, interference and packet loss
   under motion have not been characterized.
 - DJI's landing procedure may require additional confirmation near the

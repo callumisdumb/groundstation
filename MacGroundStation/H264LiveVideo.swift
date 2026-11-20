@@ -35,22 +35,20 @@ final class H264LiveVideoClient: ObservableObject {
             self?.vision.receive(pixelBuffer)
         }
         parser.onAccessUnit = { [weak self] nalUnits, sps, pps in
-            Task { @MainActor in
-                self?.present(nalUnits, sps: sps, pps: pps)
-            }
+            self?.present(nalUnits, sps: sps, pps: pps)
         }
     }
 
-    func connect(host: String, pairingCode: String) {
+    func connect(host: String, pairingCode: String, bridgeKey: String) {
         disconnect()
         let host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let code = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty, code.count == 6, code.allSatisfy(\.isNumber) else {
-            streamStatus = "Enter iPhone IP and six-digit pairing code"
+        guard !host.isEmpty, let parameters = BridgeTransport.parameters(key: bridgeKey, code: code, channel: .video) else {
+            streamStatus = "Check the iPhone address and pairing credentials"
             return
         }
         guard let port = NWEndpoint.Port(rawValue: 8766) else { return }
-        let conn = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
+        let conn = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
         connection = conn
         streamStatus = "Connecting to iPhone video port 8766…"
         conn.stateUpdateHandler = { [weak self] state in
@@ -58,17 +56,19 @@ final class H264LiveVideoClient: ObservableObject {
                 guard let self, self.connection === conn else { return }
                 switch state {
                 case .ready:
+                    guard BridgeTransport.authenticated(conn) else {
+                        self.close(conn, reason: "Video pairing failed")
+                        return
+                    }
                     self.connected = true
-                    self.streamStatus = "Video socket connected; waiting for H.264 parameter sets"
-                    conn.send(content: Data(("GSVIDEO1 " + code + "\n").utf8),
-                              completion: .contentProcessed { [weak self] error in
-                        if let error {
-                            Task { @MainActor in
-                                self?.close(conn, reason: "Video pairing failed: \(error.localizedDescription)")
-                            }
-                        }
-                    })
+                    self.streamStatus = "Video paired · waiting for camera"
                     self.receive(from: conn)
+                case .waiting(let error):
+                    if case .tls = error {
+                        self.close(conn, reason: "Video pairing failed. Check the bridge credentials.")
+                    } else if self.connected {
+                        self.close(conn, reason: "Video link interrupted")
+                    }
                 case .failed(let error):
                     self.close(conn, reason: "Video connection failed: \(error.localizedDescription)")
                 case .cancelled: self.close(conn, reason: "Video disconnected")
@@ -77,6 +77,11 @@ final class H264LiveVideoClient: ObservableObject {
             }
         }
         conn.start(queue: .global(qos: .userInitiated))
+        Task { @MainActor [weak self, weak conn] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard let self, let conn, self.connection === conn, !self.connected else { return }
+            self.close(conn, reason: "Video pairing timed out. Reconnect the bridge to retry.")
+        }
     }
 
     func disconnect() {
@@ -171,12 +176,14 @@ final class H264AccessUnitParser {
     private var sps: Data?
     private var pps: Data?
     private var frame: [Data] = []
+    private var accessUnitBytes = 0
     private var hasVCL = false
     private var seenIDR = false
 
     func reset() {
         bytes.removeAll(keepingCapacity: true)
         frame.removeAll()
+        accessUnitBytes = 0
         sps = nil
         pps = nil
         hasVCL = false
@@ -228,22 +235,32 @@ final class H264AccessUnitParser {
             // belonging to the same picture are kept together.
             if hasVCL && firstMacroblockIsZero(nal) { flush() }
             if type == 5 { seenIDR = true }
-            frame.append(nal)
-            hasVCL = true
+            appendToFrame(nal, isSlice: true)
         case 6: // SEI
             if hasVCL { flush() }
-            frame.append(nal)
+            appendToFrame(nal)
         case 10, 11:
             flush()
         default:
             if hasVCL { flush() }
-            if type < 24 { frame.append(nal) }
+            if type < 24 { appendToFrame(nal) }
         }
+    }
+
+    private func appendToFrame(_ nal: Data, isSlice: Bool = false) {
+        guard frame.count < 4096, accessUnitBytes + nal.count <= 4 * 1024 * 1024 else {
+            reset()
+            return
+        }
+        frame.append(nal)
+        accessUnitBytes += nal.count
+        if isSlice { hasVCL = true }
     }
 
     private func flush() {
         defer {
             frame.removeAll(keepingCapacity: true)
+            accessUnitBytes = 0
             hasVCL = false
         }
         guard hasVCL, seenIDR, let sps, let pps else { return }

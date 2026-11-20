@@ -1,17 +1,19 @@
+import CoreLocation
 import SwiftUI
 
 enum GSPalette {
-    static let background = Color(red: 0.052, green: 0.068, blue: 0.087)
-    static let side = Color(red: 0.075, green: 0.091, blue: 0.116)
-    static let panel = Color(red: 0.092, green: 0.112, blue: 0.140)
-    static let raised = Color(red: 0.125, green: 0.150, blue: 0.181)
-    static let border = Color.white.opacity(0.10)
-    static let highlight = Color(red: 0.18, green: 0.65, blue: 0.77)
-    static let slate = Color(red: 0.16, green: 0.20, blue: 0.25)
-    static let cyan = Color(red: 0.24, green: 0.82, blue: 0.94)
-    static let green = Color(red: 0.29, green: 0.85, blue: 0.60)
-    static let amber = Color(red: 1.0, green: 0.70, blue: 0.32)
-    static let muted = Color(red: 0.58, green: 0.65, blue: 0.74)
+    static let rail = Color(red: 0.116, green: 0.215, blue: 0.688)
+    static let background = Color(white: 0.10)
+    static let side = Color(white: 0.152)
+    static let panel = Color(white: 0.183)
+    static let raised = Color(white: 0.246)
+    static let border = Color(white: 0.29)
+    static let highlight = Color(red: 0.19, green: 0.48, blue: 0.98)
+    static let slate = Color(white: 0.22)
+    static let cyan = Color(red: 0.39, green: 0.65, blue: 1)
+    static let green = Color(red: 0.39, green: 0.85, blue: 0.42)
+    static let amber = Color(red: 1.0, green: 0.73, blue: 0.32)
+    static let muted = Color(white: 0.74)
 }
 
 struct GSPanel<Content: View>: View {
@@ -33,37 +35,17 @@ struct GSPanel<Content: View>: View {
                     if let icon {
                         Image(systemName: icon).foregroundStyle(GSPalette.cyan)
                     }
-                    Text(title.uppercased())
-                        .tracking(0.8)
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.85))
                     Spacer(minLength: 0)
                 }
             }
             content
         }
-        .padding(15)
-        .background {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(LinearGradient(colors: [
-                    Color(red: 0.12, green: 0.15, blue: 0.19),
-                    GSPalette.panel
-                ], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.13)
-                }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(LinearGradient(colors: [
-                    .white.opacity(0.13),
-                    .white.opacity(0.025)
-                ], startPoint: .topLeading, endPoint: .bottomTrailing),
-                lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+        .padding(12)
+        .background(GSPalette.panel)
+        .overlay(Rectangle().strokeBorder(GSPalette.border, lineWidth: 1))
     }
 }
 
@@ -93,7 +75,7 @@ struct GSStatusChip: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .background(tint.opacity(0.12))
-        .clipShape(Capsule())
+        .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 }
 
@@ -142,6 +124,16 @@ struct GSKeyCap: View {
 extension GroundStationMessage.Payload {
     var validAircraft: Bool {
         aircraftConnected == true && simulated != true
+    }
+    var aircraftPoint: CLLocationCoordinate2D? {
+        guard validAircraft, let latitude, let longitude else { return nil }
+        let point = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        return CLLocationCoordinate2DIsValid(point) ? point : nil
+    }
+    var homePoint: CLLocationCoordinate2D? {
+        guard validAircraft, homeLocationSet == true, let homeLatitude, let homeLongitude else { return nil }
+        let point = CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude)
+        return CLLocationCoordinate2DIsValid(point) ? point : nil
     }
     var batteryText: String { batteryPercent.map { "\($0)%" } ?? "—" }
     var altitudeText: String {

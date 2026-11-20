@@ -76,6 +76,7 @@ final class DJIAdapter: NSObject {
             lastFlightState = nil
             flightArmedUntil = .distantPast
             publish {
+                $0.aircraftSampledAt = nil
                 $0.aircraftConnected = false
                 $0.controllerConnected = product != nil
                 $0.aircraftModel = nil
@@ -594,11 +595,13 @@ extension DJIAdapter: DJISDKManagerDelegate {
 extension DJIAdapter: DJIFlightControllerDelegate {
     func flightController(_ fc: DJIFlightController, didUpdate state: DJIFlightControllerState) {
         lastFlightState = state
-        lastAircraftStateAt = Date()
+        let sampledAt = Date()
+        lastAircraftStateAt = sampledAt
         let speed = hypot(Double(state.velocityX), Double(state.velocityY))
         let position = state.aircraftLocation?.coordinate
         let home = state.homeLocation?.coordinate
         publish {
+            $0.aircraftSampledAt = sampledAt
             $0.aircraftConnected = true
             $0.controllerConnected = true
             $0.connectionState = "DJI aircraft linked (real telemetry)"
