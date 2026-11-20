@@ -80,8 +80,7 @@ emergency operator override.
 The project does not define `GROUNDSTATION_ACTIVE_TRACK_TESTED`.
 Manual live flight now has separate authorization (see LiveFlight.md), but autonomous ActiveTrack steering
 requires several independent checks:
-- secure authenticated Mac↔iPhone command transport (the current TCP
-  with six-digit pairing code is plaintext)
+- validation of the paired Mac↔iPhone link on the actual devices ([transport review](WorkspaceReview.md#trust-boundary))
 - measured command/video latency; adequate flight camera reliability
 - simulator validation of mission start, stop, target loss and re-acquisition
 - specific Mavic Pro firmware tests and obstacle limits

@@ -3,7 +3,8 @@ import XCTest
 final class WorkspaceTests: XCTestCase {
     func testProjectRoutesAndCockpit() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["--temporary-route-library", "-GroundStationCallSign", "Local operator"]
+        continueAfterFailure = false
+        app.launchEnvironment["GROUNDSTATION_TEMPORARY_ROUTES"] = "1"
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15))

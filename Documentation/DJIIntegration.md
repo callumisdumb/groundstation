@@ -8,7 +8,7 @@ This repository targets DJI Mobile SDK v4 for the **original Mavic Pro**. DJI's 
 - https://developer.dji.com/mobile-sdk/documentation/quick-start/index.html
 - https://developer.dji.com/mobile-sdk/documentation/ios-tutorials/
 
-The iPhone 15, modern iOS releases, your Xcode version and the drone/RC firmware are **not validated**. This scaffold does not implement DJI SDK registration or aircraft communication.
+The iPhone 15, modern iOS releases, your Xcode version and the drone/RC firmware are **not validated**. The iPhone adapter contains SDK registration and aircraft callbacks. Real-device compatibility remains open.
 
 ## Prerequisites
 
@@ -32,12 +32,6 @@ After the official sample works, implement \`iOSFlightBridge/DJIAdapter.swift\`:
 - Set \`simulated = false\` **only** for real SDK callbacks.
 - Deliver messages via the local bridge; never expose DJI framework types to the Mac project.
 
-## Future roadmap
+## Implemented integration and remaining checks
 
-- Local video decoding on iPhone, then WebRTC encoded feed to Mac.
-- Map display with GPS tracks and telemetry logging.
-- Waypoint editor and mission management.
-- Flight control only after separate safety review, simulator tests, arming/authorisation design, watchdog and physical-controller fallback.
-- Encrypted authenticated VPN transport for remote **monitoring**, before any internet command path.
-
-Do not enable unrestricted internet flight control or use virtual joysticks with unverified latency/failsafe handling.
+The Mac provides a local MapKit project, an offline route editor and an H.264 viewer. The iPhone connects through the legacy DJI adapter. Hardware testing must establish registration, current telemetry, sustained video, link recovery and control-authority behaviour. [Hardware test plan](TestingPlan.md) · [Design and security review](WorkspaceReview.md)

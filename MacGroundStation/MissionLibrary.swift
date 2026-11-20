@@ -40,7 +40,7 @@ final class MissionLibrary: ObservableObject {
 
     convenience init() {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--temporary-route-library") {
+        if ProcessInfo.processInfo.environment["GROUNDSTATION_TEMPORARY_ROUTES"] == "1" {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             self.init(storageURL: root.appendingPathComponent("routes.json"))
             return
