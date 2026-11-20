@@ -21,6 +21,7 @@ struct MissionRoute: Identifiable, Codable {
     var id = UUID()
     var name: String
     var createdAt = Date()
+    var updatedAt: Date?
     var waypoints: [MissionWaypoint] = []
 }
 
@@ -49,6 +50,7 @@ final class MissionLibrary: ObservableObject {
     func renameSelected(_ name: String) {
         guard let i = selectedIndex, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         routes[i].name = name.trimmingCharacters(in: .whitespaces)
+        routes[i].updatedAt = Date()
         persist()
     }
 
@@ -69,6 +71,7 @@ final class MissionLibrary: ObservableObject {
             return
         }
         lastError = nil
+        routes[i].updatedAt = Date()
         let number = routes[i].waypoints.count + 1
         routes[i].waypoints.append(MissionWaypoint(
             label: "Waypoint \(number)",
@@ -78,6 +81,7 @@ final class MissionLibrary: ObservableObject {
 
     func deleteWaypoint(id: UUID) {
         guard let i = selectedIndex else { return }
+        routes[i].updatedAt = Date()
         routes[i].waypoints.removeAll { $0.id == id }
         persist()
     }

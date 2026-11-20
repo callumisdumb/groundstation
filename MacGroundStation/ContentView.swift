@@ -1,13 +1,21 @@
 import CoreLocation
 import SwiftUI
 
-/// App navigation lives in a compact command bar rather than a permanent
-/// sidebar. FlightHub's cockpit uses its real estate for video and maps.
 enum GSWorkspace: String, CaseIterable, Identifiable {
+    case project = "Team"
+    case missions = "Flight Route Library"
     case cockpit = "Virtual Cockpit"
-    case missions = "Mission Planning"
-    case activity = "Activity & Logs"
+    case activity = "Activity"
     var id: Self { self }
+
+    var icon: String {
+        switch self {
+        case .project: return "person.2.fill"
+        case .missions: return "point.topleft.down.curvedto.point.bottomright.up"
+        case .cockpit: return "viewfinder"
+        case .activity: return "list.bullet.rectangle"
+        }
+    }
 }
 
 struct ContentView: View {
@@ -15,272 +23,168 @@ struct ContentView: View {
     @StateObject private var liveVideo = H264LiveVideoClient()
     @StateObject private var keyboard = KeyboardPilotController()
     @StateObject private var missions = MissionLibrary()
-
-    @State private var workspace: GSWorkspace = .cockpit
-    @State private var host = UserDefaults.standard.string(forKey: "GroundStationBridgeIP") ?? ""
+    @State private var workspace: GSWorkspace = .project
+    @AppStorage("GroundStationBridgeIP") private var host = ""
     @State private var satellite = true
     @State private var followAircraft = true
     @State private var track: [CLLocationCoordinate2D] = []
+    @State private var trackSource: String?
     @State private var showConnection = false
 
-    private var status: GroundStationMessage.Payload? { client.latestStatus?.payload }
-    private var aircraftConnected: Bool { status?.validAircraft == true }
-
     var body: some View {
-        VStack(spacing: 0) {
-            commandBar
-                .frame(height: 52)
-            Rectangle().fill(Color.white.opacity(0.11)).frame(height: 1)
-            Group {
-                switch workspace {
-                case .cockpit:
-                    FlightCockpitView(
-                        client: client, video: liveVideo, keyboard: keyboard,
-                        missions: missions, satellite: $satellite,
-                        followAircraft: $followAircraft, track: track)
-                case .missions:
-                    MissionWorkspace(missions: missions, client: client,
-                                     satellite: $satellite, track: track)
-                case .activity:
-                    ActivityWorkspace(client: client)
+        HStack(spacing: 0) {
+            if workspace != .cockpit { rail }
+            TimelineView(.periodic(from: .now, by: 1)) { clock in
+                let status = ProjectStatus(client: client, now: clock.date)
+                VStack(spacing: 0) {
+                    if workspace == .cockpit { cockpitMenu(status) }
+                    workspaceView(status: status, now: clock.date)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    statusBar(status)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            bottomStatus
-                .frame(height: 24)
         }
-        .background(Color(red: 0.055, green: 0.066, blue: 0.08))
+        .background(GSPalette.background)
+        .tint(GSPalette.highlight)
         .preferredColorScheme(.dark)
-        .frame(minWidth: 1130, minHeight: 710)
         .onAppear { keyboard.install(client: client) }
         .onDisappear {
             keyboard.uninstall()
             liveVideo.disconnect()
             client.disconnect()
         }
-        .onChange(of: workspace) { _ in
-            keyboard.keyboardEnabled = false
-            keyboard.releaseAll()
+        .onChange(of: workspace) { _ in keyboard.keyboardEnabled = false }
+        .onChange(of: showConnection) { shown in
+            if shown { keyboard.keyboardEnabled = false }
         }
         .onChange(of: client.connected) { connected in
             keyboard.connectionChanged()
-            if !connected { liveVideo.disconnect() }
-        }
-        .onChange(of: client.latestStatus?.payload.latitude) { _ in
-            guard let status, status.validAircraft,
-                  let lat = status.latitude, let lon = status.longitude else { return }
-            let point = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            guard CLLocationCoordinate2DIsValid(point) else { return }
-            if let last = track.last,
-               abs(last.latitude - lat) + abs(last.longitude - lon) < 0.000001 {
-                return
+            track.removeAll()
+            trackSource = nil
+            if connected, let key = client.bridgeKey {
+                liveVideo.connect(host: host, pairingCode: client.pairingCode, bridgeKey: key)
+            } else {
+                liveVideo.disconnect()
+                keyboard.keyboardEnabled = false
             }
-            track.append(point)
-            if track.count > 400 { track.removeFirst(track.count - 400) }
+        }
+        .onChange(of: client.lastTelemetryAt) { _ in recordPosition() }
+    }
+
+    @ViewBuilder
+    private func workspaceView(status: ProjectStatus, now: Date) -> some View {
+        switch workspace {
+        case .project:
+            ProjectWorkspace(client: client, missions: missions, status: status, satellite: $satellite,
+                             track: track, openConnection: { showConnection = true },
+                             openCockpit: { workspace = .cockpit }, openRoutes: { workspace = .missions })
+        case .missions:
+            MissionWorkspace(missions: missions, client: client, satellite: $satellite, track: track, status: status,
+                             closeLibrary: { workspace = .project })
+        case .cockpit:
+            FlightCockpitView(client: client, video: liveVideo, keyboard: keyboard, missions: missions,
+                              satellite: $satellite, followAircraft: $followAircraft, track: track,
+                              status: status, now: now)
+        case .activity:
+            ActivityWorkspace(client: client)
         }
     }
 
-    private var commandBar: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(red: 0.17, green: 0.75, blue: 0.68))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "airplane")
-                    .foregroundStyle(.black)
-                    .font(.system(size: 15, weight: .bold))
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("GROUNDSTATION")
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .tracking(0.7)
-                Text("VIRTUAL COCKPIT  /  MAVIC PRO")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.47))
-            }
-            Rectangle()
-                .fill(.white.opacity(0.14))
-                .frame(width: 1, height: 29)
-                .padding(.horizontal, 5)
-
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(aircraftConnected ? Color.green : Color.orange)
-                    .frame(width: 7, height: 7)
-                Text(aircraftConnected ? "AIRCRAFT LINKED" :
-                     (client.connected ? "RC / AIRCRAFT CHECK" : "STANDBY · DISCONNECTED"))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.83))
-            }
-            Spacer(minLength: 8)
-
-            if workspace == .cockpit {
-                Text(client.djiSimulatorActive && client.flightReady
-                     ? "DJI SIM · CONTROL READY"
-                     : (client.liveFlightAuthorized
-                        ? "LIVE FLIGHT · AUTHORIZED"
-                        : (client.flightKeyVerified
-                           ? "LIVE MODE · PREFLIGHT REQUIRED"
-                           : "PAIR FLIGHT CONTROL KEY")))
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(client.flightReady ? Color.green : Color.orange)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background((client.flightReady ? Color.green : Color.orange).opacity(0.12))
-                    .clipShape(Capsule())
-            }
-
-            topCommand("Virtual Cockpit", icon: "viewfinder",
-                       active: workspace == .cockpit) { workspace = .cockpit }
-            topCommand("Routes", icon: "point.topleft.down.curvedto.point.bottomright.up",
-                       active: workspace == .missions) { workspace = .missions }
-            topCommand("Logs", icon: "clock.arrow.circlepath",
-                       active: workspace == .activity) { workspace = .activity }
-
-            Rectangle()
-                .fill(.white.opacity(0.14))
-                .frame(width: 1, height: 27)
-
-            Button { showConnection.toggle() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: client.connected ? "wifi" : "wifi.slash")
-                        .foregroundStyle(client.connected ? Color.green : Color.orange)
-                    Text(client.connected ? "Connected" : "Connect")
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.45))
+    private var rail: some View {
+        VStack(spacing: 5) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.system(size: 17, weight: .bold))
+                .frame(height: 42)
+                .accessibilityLabel("GroundStation")
+            Divider().overlay(.white.opacity(0.25)).padding(.horizontal, 8)
+            ForEach(GSWorkspace.allCases) { item in
+                let selected = item == workspace
+                Button { workspace = item } label: {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15, weight: .medium))
+                        .frame(width: 34, height: 32)
+                        .background(selected ? Color.white.opacity(0.23) : .clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .padding(.horizontal, 11).padding(.vertical, 8)
-                .background(Color.white.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .buttonStyle(.plain)
+                .help(item.rawValue)
+                .accessibilityLabel(item.rawValue)
+                .accessibilityIdentifier("nav-\(item.rawValue)")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer()
+            Button { showConnection.toggle() } label: {
+                Image(systemName: client.connected ? "link.circle.fill" : "link.circle")
+                    .font(.system(size: 18)).frame(width: 36, height: 36)
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showConnection, arrowEdge: .bottom) {
-                connectionPopover
-                    .frame(width: 318)
-            }
+            .accessibilityLabel("Bridge connection")
+            .help("Bridge connection")
+
         }
-        .padding(.horizontal, 15)
-        .background(Color(red: 0.085, green: 0.096, blue: 0.111))
+        .padding(.bottom, 8)
+        .frame(width: 46)
+        .foregroundStyle(.white)
+        .background(GSPalette.rail)
     }
 
-    private func topCommand(_ title: String, icon: String,
-                            active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                Text(title)
-            }
-            .font(.system(size: 11, weight: active ? .semibold : .medium))
-            .foregroundStyle(active ? .white : .white.opacity(0.57))
-            .padding(.horizontal, 10)
-            .frame(height: 31)
-            .background(active ? Color.white.opacity(0.11) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var connectionPopover: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("iPhone bridge", systemImage: "iphone.gen3")
-                    .font(.headline)
-                Spacer()
-                Image(systemName: client.connected ? "checkmark.circle.fill" : "circle.dotted")
-                    .foregroundStyle(client.connected ? .green : .orange)
-            }
-            Text("Mac and iPhone must be on the same trusted Wi-Fi. The iPhone runs the DJI SDK while connected to the original controller.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("iPHONE WI-FI ADDRESS")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                TextField("e.g. 192.168.4.57", text: $host)
-                    .textFieldStyle(.roundedBorder)
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                Text("SIX-DIGIT PAIRING CODE")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                SecureField("From iOSFlightBridge", text: $client.pairingCode)
-                    .textFieldStyle(.roundedBorder)
-            }
-            Divider()
-            HStack(spacing: 8) {
-                Image(systemName: "lock.shield")
-                    .foregroundStyle(client.flightKeyVerified ? .green : .orange)
-                Text("ENCRYPTED FLIGHT CONTROL")
-                    .font(.system(size: 10, weight: .bold))
-                Spacer()
-                Text(client.flightKeyVerified ? "VERIFIED" : "NOT PAIRED")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(client.flightKeyVerified ? .green : .orange)
-            }
-            Text("One-time setup: copy the flight access key from iOSFlightBridge on your iPhone. Unlike the six-digit code, this is a private 256-bit key stored in Keychain.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            SecureField("Paste 256-bit flight access key", text: $client.flightKeyInput)
-                .textFieldStyle(.roundedBorder)
-            Button {
-                client.saveFlightKey()
-            } label: {
-                Label("Save & verify flight key", systemImage: "checkmark.shield")
-            }
-            .disabled(!FlightSecurity.validKey(client.flightKeyInput))
-            HStack {
-                Button {
-                    UserDefaults.standard.set(host, forKey: "GroundStationBridgeIP")
-                    client.connect(host: host, port: 8765)
-                    liveVideo.connect(host: host, pairingCode: client.pairingCode)
-                    showConnection = false
-                } label: { Label("Connect", systemImage: "link") }
-                    .disabled(host.isEmpty || client.pairingCode.count != 6)
-                    .keyboardShortcut(.return, modifiers: [])
-                Button("Disconnect") {
-                    keyboard.releaseAll()
-                    liveVideo.disconnect()
-                    client.disconnect()
-                    showConnection = false
-                }.disabled(!client.connected && !liveVideo.connected)
-            }
-            Divider()
-            HStack {
-                Text("TELEMETRY 8765")
-                Spacer()
-                Text("VIDEO 8766")
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
-        }
-        .padding(17)
-    }
-
-    private var bottomStatus: some View {
+    private func cockpitMenu(_ status: ProjectStatus) -> some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(client.connected ? Color.green : Color.orange)
-                .frame(width: 6, height: 6)
-            Text(client.connected ? "BRIDGE ONLINE" : "BRIDGE OFFLINE")
-            Rectangle().fill(.white.opacity(0.16)).frame(width: 1, height: 10)
-            Text(liveVideo.streamStatus)
-                .lineLimit(1)
+            ProjectIconButton(label: "Return to project", symbol: "chevron.left") { workspace = .project }
+            Text("Virtual Cockpit").fontWeight(.semibold)
+            Divider().frame(height: 14)
+            Text("Mavic Pro Project").foregroundStyle(GSPalette.muted)
             Spacer()
-            Text("MAC CONTROL STATION")
-            Text("·")
-            Text("LOCAL LINK ONLY")
-            Text("·")
-            Text(client.liveFlightAuthorized ? "LIVE AIRCRAFT CONTROL · AUTHORIZED" :
-                 (client.djiSimulatorActive ? "DJI SIMULATOR" : "LIVE PREFLIGHT GATED"))
-                .foregroundStyle(client.flightReady ? .green : .orange)
+            Circle().fill(status.tint).frame(width: 6, height: 6)
+            Text(status.rawValue)
+            ProjectIconButton(label: "Flight Route Library", symbol: GSWorkspace.missions.icon) { workspace = .missions }
+            ProjectIconButton(label: "Bridge connection", symbol: "link") { showConnection = true }
         }
-        .font(.system(size: 9, weight: .medium, design: .monospaced))
-        .foregroundStyle(.white.opacity(0.48))
-        .padding(.horizontal, 13)
-        .background(Color(red: 0.085, green: 0.096, blue: 0.111))
+        .font(.system(size: 12)).padding(.horizontal, 6).frame(height: 38).background(GSPalette.side)
+    }
+
+    private func statusBar(_ status: ProjectStatus) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(status.tint).frame(width: 6, height: 6)
+            Text(status.rawValue)
+            if client.connected {
+                Divider().frame(height: 11)
+                Text(liveVideo.lastVideoAt == nil ? liveVideo.streamStatus : "H.264")
+                    .lineLimit(1)
+            }
+            Spacer()
+            if client.connected && client.flightKeyVerified {
+                Text(client.liveFlightAuthorized ? "Live flight authorized" :
+                     (client.djiSimulatorActive ? "DJI Simulator" : "Live flight locked"))
+            }
+            Button(client.connected ? "Connection" : "Connect bridge") { showConnection = true }
+                .buttonStyle(.plain)
+                .foregroundStyle(GSPalette.cyan)
+                .popover(isPresented: $showConnection, arrowEdge: .top) {
+                    BridgeConnectionView(client: client, host: $host)
+                }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(GSPalette.muted)
+        .padding(.horizontal, 10)
+        .frame(height: 25)
+        .background(GSPalette.background)
+    }
+
+    private func recordPosition() {
+        guard let payload = client.latestStatus?.payload, payload.validAircraft else {
+            track.removeAll()
+            trackSource = nil
+            return
+        }
+        let source = (payload.djiSimulatorActive == true ? "sim/" : "aircraft/") + (payload.aircraftModel ?? "")
+        if source != trackSource {
+            track.removeAll()
+            trackSource = source
+        }
+        guard let point = payload.aircraftPoint else { return }
+        if let last = track.last, last.latitude == point.latitude && last.longitude == point.longitude { return }
+        track.append(point)
+        if track.count > 400 { track.removeFirst(track.count - 400) }
     }
 }

@@ -13,8 +13,11 @@ struct FlightCockpitView: View {
     @Binding var satellite: Bool
     @Binding var followAircraft: Bool
     let track: [CLLocationCoordinate2D]
+    let status: ProjectStatus
+    let now: Date
+    @State private var showKeyboard = false
 
-    @State private var activeTool: CockpitTool = .vision
+    @State private var activeTool: CockpitTool = .aircraft
     @State private var showToolPanel = false
     @State private var mapFocused = false
     @State private var gimbalPitch = -30.0
@@ -35,9 +38,9 @@ struct FlightCockpitView: View {
     }
 
     private let line = Color.white.opacity(0.12)
-    private let green = Color(red: 0.23, green: 0.89, blue: 0.70)
+    private let green = GSPalette.green
     private let amber = Color(red: 1.0, green: 0.72, blue: 0.33)
-    private let console = Color(red: 0.061, green: 0.069, blue: 0.081)
+    private let console = GSPalette.background
 
     enum CockpitTool: String, CaseIterable {
         case vision = "AI Tracking"
@@ -46,27 +49,37 @@ struct FlightCockpitView: View {
         case flight = "Control"
     }
 
-    private var telemetry: GroundStationMessage.Payload? { client.latestStatus?.payload }
+    private var telemetry: GroundStationMessage.Payload? { status.hasAircraftData ? client.latestStatus?.payload : nil }
+    private var staleVideo: Bool { video.lastVideoAt.map { now.timeIntervalSince($0) > 3 } ?? false }
+    private var lastAirborne: Bool {
+        client.latestStatus?.payload.validAircraft == true && client.latestStatus?.payload.isFlying == true
+    }
     private var aircraftLinked: Bool { telemetry?.validAircraft == true }
 
     var body: some View {
         GeometryReader { geometry in
-            let stripHeight: CGFloat = 170
-            let mapWidth = max(325, geometry.size.width * (mapFocused ? 0.54 : 0.35))
-            VStack(spacing: 0) {
-                HStack(spacing: 1) {
+            let width = max(280, geometry.size.width * (mapFocused ? 0.46 : 0.32))
+            HStack(spacing: 2) {
+                VStack(spacing: 2) {
+                    auxiliaryPane.frame(height: geometry.size.height * (mapFocused ? 0.22 : 0.45))
                     mapPane
-                        .frame(width: mapWidth)
-                    cameraPane
-                        .frame(maxWidth: .infinity)
                 }
-                .frame(height: max(325, geometry.size.height - stripHeight))
-                Rectangle().fill(line).frame(height: 1)
-                flightDeck
-                    .frame(height: stripHeight - 1)
+                .frame(width: width)
+                cameraPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(console)
+        .onChange(of: client.connected) { connected in
+            if !connected {
+                actionToConfirm = nil
+                resetChecklist()
+            }
+        }
+        .onChange(of: client.djiSimulatorActive) { _ in
+            actionToConfirm = nil
+            resetChecklist()
+        }
         .confirmationDialog(
             client.djiSimulatorActive ?
                 "Confirm DJI Simulator command" : "Confirm REAL aircraft command",
@@ -77,6 +90,7 @@ struct FlightCockpitView: View {
         ) {
             if let action = actionToConfirm {
                 Button(confirmTitle(action)) {
+                    guard client.connected, action != .authorizeLiveFlight || liveChecklistReady else { return }
                     if action == .land || action == .returnHome ||
                        action == .stopDJISimulator || action == .revokeLiveFlight {
                         keyboard.keyboardEnabled = false
@@ -88,12 +102,7 @@ struct FlightCockpitView: View {
                         client.send(action)
                     }
                     if action == .authorizeLiveFlight {
-                        // A new authorization must never reuse an old checklist.
-                        liveConfirmPhrase = ""
-                        liveClearArea = false
-                        livePilotAtRC = false
-                        liveVLOSAndRegulations = false
-                        liveFailsafeReviewed = false
+                        resetChecklist()
                     }
                     actionToConfirm = nil
                 }
@@ -104,6 +113,37 @@ struct FlightCockpitView: View {
                  ? "SIMULATOR ONLY: remove propellers. The physical remote controller must remain linked."
                  : "REAL AIRCRAFT: motors and propellers may start. Ensure a clear outdoor flight area, legal visual line of sight, and a pilot holding the physical DJI remote controller. Cancel if unsure.")
         }
+    }
+
+    private func resetChecklist() {
+        liveConfirmPhrase = ""
+        liveClearArea = false
+        livePilotAtRC = false
+        liveVLOSAndRegulations = false
+        liveFailsafeReviewed = false
+    }
+
+    private var auxiliaryPane: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Auxiliary view", systemImage: "rectangle.on.rectangle")
+                Spacer()
+                Text("iPhone bridge").foregroundStyle(GSPalette.muted)
+            }
+            .font(.system(size: 11)).padding(.horizontal, 10)
+            .frame(height: 30).background(GSPalette.side)
+            Spacer()
+            Image(systemName: "video.slash").font(.system(size: 25, weight: .light))
+            Text("No auxiliary camera").font(.callout).padding(.top, 5)
+            Spacer()
+            HStack {
+                Label(status.rawValue, systemImage: "antenna.radiowaves.left.and.right")
+                Spacer()
+                Text(telemetry?.aircraftModel ?? "—").lineLimit(1)
+            }.font(.caption).padding(8).background(GSPalette.side)
+        }
+        .foregroundStyle(GSPalette.muted)
+        .frame(maxWidth: .infinity).background(Color(white: 0.075))
     }
 
     // MARK: Full-height satellite map
@@ -211,6 +251,7 @@ struct FlightCockpitView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(help)
         .help(help)
     }
 
@@ -220,27 +261,25 @@ struct FlightCockpitView: View {
             Color.black
             H264LiveVideoView(display: video.display)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if video.framesDisplayed > 0 {
+            if video.framesDisplayed > 0 && !staleVideo {
                 VisionVideoOverlay(vision: video.vision,
                                    client: client,
                                    manualLabel: manualTrackingLabel)
             }
-            if video.framesDisplayed == 0 {
+            if staleVideo { Color.black.opacity(0.77).allowsHitTesting(false) }
+            if video.framesDisplayed == 0 || staleVideo {
                 VStack(spacing: 11) {
                     Image(systemName: "video.slash")
                         .font(.system(size: 38, weight: .ultraLight))
                         .foregroundStyle(.white.opacity(0.3))
-                    Text("NO LIVE VIDEO")
+                    Text(staleVideo ? "Video paused" : "No live video")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .tracking(1.5)
-                    Text(video.streamStatus)
+                    Text(staleVideo ? "Waiting for a new camera frame" : video.streamStatus)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.54))
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 390)
-                    Text("Connect the iPhone bridge and link the aircraft")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.40))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
@@ -253,8 +292,8 @@ struct FlightCockpitView: View {
                         .foregroundStyle(.white)
                     Rectangle().fill(.white.opacity(0.28)).frame(width: 1, height: 13)
                     Text("H.264")
-                    Text(video.framesDisplayed > 0 ? "\(video.framesPerSecond) FPS" : "NO SIGNAL")
-                        .foregroundStyle(video.framesDisplayed > 0 ? green : amber)
+                    Text(staleVideo ? "STALE" : (video.framesDisplayed > 0 ? "\(video.framesPerSecond) FPS" : "NO SIGNAL"))
+                        .foregroundStyle(video.framesDisplayed > 0 && !staleVideo ? green : amber)
                     if video.vision.enabled {
                         Text("AI")
                             .foregroundStyle(green)
@@ -276,13 +315,14 @@ struct FlightCockpitView: View {
                         .padding(.trailing, 11)
                 }
                 Spacer(minLength: 0)
+                if !showToolPanel { cameraInstruments }
                 HStack {
                     Label(video.vision.selectedBounds == nil ?
                           "VIDEO MONITOR" : "LOCAL TARGET SELECTED",
                           systemImage: "viewfinder")
                         .foregroundStyle(video.vision.selectedBounds == nil ? .white : green)
                     Spacer()
-                    Text("DEVELOPMENT PREVIEW · NOT FOR PILOTING")
+                    Text("Development video preview")
                         .foregroundStyle(amber)
                 }
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
@@ -297,7 +337,7 @@ struct FlightCockpitView: View {
                     Spacer()
                     toolInspector
                         .frame(width: 304)
-                        .background(Color(red: 0.105, green: 0.118, blue: 0.135))
+                        .background(GSPalette.side)
                         .overlay(alignment: .leading) {
                             Rectangle().fill(line).frame(width: 1)
                         }
@@ -364,6 +404,7 @@ struct FlightCockpitView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(tip)
         .help(tip)
     }
 
@@ -380,6 +421,7 @@ struct FlightCockpitView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.6))
+                .accessibilityLabel("Close inspector")
             }
             .padding(.horizontal, 14)
             .frame(height: 42)
@@ -468,7 +510,7 @@ struct FlightCockpitView: View {
             statusRow("Mode", client.djiSimulatorActive ? "SIMULATOR" :
                        (client.liveFlightAuthorized ? "LIVE AUTHORIZED" : "LIVE LOCKED"))
             statusRow("Virtual Sticks", client.virtualSticksEnabled ? "ENGAGED" : "RELEASED")
-            statusRow("Flight", telemetry?.isFlying == true ? "AIRBORNE" : "ON GROUND")
+            statusRow("Flight", telemetry?.isFlying.map { $0 ? "AIRBORNE" : "ON GROUND" } ?? "—")
 
             Divider().overlay(line)
 
@@ -516,15 +558,14 @@ struct FlightCockpitView: View {
                     Label("Land", systemImage: "arrow.down")
                 }
                 .disabled(!client.connected || !client.flightKeyVerified ||
-                          !aircraftLinked || telemetry?.isFlying != true)
+                          !lastAirborne)
                 Button {
                     actionToConfirm = .returnHome
                 } label: {
                     Label("Return Home", systemImage: "house.fill")
                 }
                 .disabled(!client.connected || !client.flightKeyVerified ||
-                          !aircraftLinked || telemetry?.isFlying != true ||
-                          telemetry?.homeLocationSet != true)
+                          !lastAirborne || client.latestStatus?.payload.homeLocationSet != true)
             }
             .controlSize(.small)
 
@@ -567,15 +608,7 @@ struct FlightCockpitView: View {
                 .foregroundStyle(amber)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .onChange(of: client.connected) { connected in
-            if !connected {
-                liveConfirmPhrase = ""
-                liveClearArea = false
-                livePilotAtRC = false
-                liveVLOSAndRegulations = false
-                liveFailsafeReviewed = false
-            }
-        }
+
     }
 
     private var liveFlightSection: some View {
@@ -642,68 +675,39 @@ struct FlightCockpitView: View {
     private func angle(_ value: Double?) -> String {
         value.map { String(format: "%.1f°", $0) } ?? "—"
     }
-    private var aircraftCoordinate: CLLocationCoordinate2D? {
-        guard aircraftLinked, let lat = telemetry?.latitude,
-              let lon = telemetry?.longitude else { return nil }
-        let p = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        return CLLocationCoordinate2DIsValid(p) ? p : nil
-    }
-    private var homeCoordinate: CLLocationCoordinate2D? {
-        guard aircraftLinked, telemetry?.homeLocationSet == true,
-              let lat = telemetry?.homeLatitude, let lon = telemetry?.homeLongitude else { return nil }
-        let p = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        return CLLocationCoordinate2DIsValid(p) ? p : nil
-    }
+    private var aircraftCoordinate: CLLocationCoordinate2D? { telemetry?.aircraftPoint }
+    private var homeCoordinate: CLLocationCoordinate2D? { telemetry?.homePoint }
 
-    // MARK: FlightHub-style OSD and keyboard ribbon
-    private var flightDeck: some View {
-        HStack(spacing: 0) {
-            batteryDeck
-                .frame(width: 139)
-            deckDivider
-            instrumentGauge
-                .frame(width: 156)
-            deckDivider
-            performanceDeck
-                .frame(maxWidth: .infinity)
-            deckDivider
-            keyboardDeck
-                .frame(width: 248)
-            deckDivider
-            flightActionDeck
-                .frame(width: 245)
-        }
-        .background(console)
-    }
-    private var deckDivider: some View {
-        Rectangle().fill(line).frame(width: 1)
-            .padding(.vertical, 15)
-    }
-
-    private var batteryDeck: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            deckLabel("AIRCRAFT")
-            Text(telemetry?.batteryText ?? "—")
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
-                .foregroundStyle(telemetry?.batteryPercent == nil ? .white : green)
-                .monospacedDigit()
-            HStack(spacing: 6) {
-                Image(systemName: "battery.75percent")
-                Text("BATTERY")
-            }
-            .foregroundStyle(.white.opacity(0.5))
-            .font(.system(size: 9, design: .monospaced))
-            Divider().overlay(line)
+    private var cameraInstruments: some View {
+        VStack(spacing: 0) {
             HStack {
-                Text("GPS")
+                if showKeyboard {
+                    keyboardDeck.frame(width: 230, height: 145).background(.black.opacity(0.78))
+                }
                 Spacer()
-                Text(telemetry?.satelliteCount.map { "\($0) SAT" } ?? "—")
+                instrumentGauge.frame(width: 130, height: 145)
+                    .background(.black.opacity(0.44))
+                Spacer()
+                Button {
+                    showKeyboard.toggle()
+                } label: { Image(systemName: "keyboard").padding(9) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Keyboard controls").help("Keyboard controls")
             }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.65))
-            Spacer(minLength: 0)
+            .padding(.horizontal, 12)
+            HStack(spacing: 10) {
+                performance("ALT", telemetry?.altitudeText ?? "—", icon: "arrow.up.to.line")
+                performance("SPEED", telemetry?.speedText ?? "—", icon: "speedometer")
+                performance("V. SPEED", telemetry?.velocityZ.map { String(format: "%.1f m/s", $0) } ?? "—", icon: "arrow.up.arrow.down")
+                performance("BATTERY", telemetry?.batteryText ?? "—", icon: "battery.75percent")
+                Button("Flight controls") {
+                    activeTool = .flight
+                    showToolPanel = true
+                }
+                .controlSize(.small)
+            }
+            .padding(10).background(.black.opacity(0.80))
         }
-        .padding(12)
     }
 
     private var instrumentGauge: some View {
@@ -727,10 +731,11 @@ struct FlightCockpitView: View {
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(amber)
                     .offset(y: -40)
-                Image(systemName: "location.north.fill")
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(green)
-                    .rotationEffect(.degrees(telemetry?.yawDegrees ?? 0))
+                if let heading = telemetry?.yawDegrees {
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 26, weight: .medium)).foregroundStyle(green)
+                        .rotationEffect(.degrees(heading))
+                }
                 Text(telemetry?.yawDegrees.map { String(format: "%03.0f°", $0) } ?? "—")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .offset(y: 36)
@@ -738,31 +743,6 @@ struct FlightCockpitView: View {
             Spacer(minLength: 0)
         }
         .padding(.top, 12)
-    }
-
-    private var performanceDeck: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            deckLabel("FLIGHT INSTRUMENTS")
-            HStack(spacing: 18) {
-                performance("H. ALT", telemetry?.altitudeText ?? "—", icon: "arrow.up.to.line")
-                performance("H. SPEED", telemetry?.speedText ?? "—", icon: "speedometer")
-                performance("V. SPEED", telemetry?.velocityZ.map {
-                    String(format: "%.1f m/s", $0)
-                } ?? "—", icon: "arrow.up.arrow.down")
-            }
-            Divider().overlay(line)
-            HStack(spacing: 12) {
-                Label(telemetry?.flightMode ?? "FLIGHT MODE —", systemImage: "airplane")
-                Spacer(minLength: 0)
-                Label(telemetry?.flightTimeSeconds.map {
-                    String(format: "%02d:%02d", $0 / 60, $0 % 60)
-                } ?? "--:--", systemImage: "clock")
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.64))
-            Spacer(minLength: 0)
-        }
-        .padding(12)
     }
 
     private func performance(_ title: String, _ value: String, icon: String) -> some View {
@@ -784,11 +764,11 @@ struct FlightCockpitView: View {
             HStack {
                 deckLabel("KEYBOARD")
                 Spacer()
-                Toggle("", isOn: $keyboard.keyboardEnabled)
+                Toggle("Capture cockpit keyboard", isOn: $keyboard.keyboardEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
-                    .help("Preview keyboard controls (does not move the drone)")
+                    .help("Capture keyboard input. Movement requires separate flight authorization.")
             }
             HStack(spacing: 12) {
                 VStack(spacing: 3) {
@@ -829,75 +809,6 @@ struct FlightCockpitView: View {
             .frame(width: wide ? 42 : 26, height: 22)
             .background(active ? green : Color.white.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 3))
-    }
-
-    private var flightActionDeck: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                deckLabel("FLIGHT OPERATIONS")
-                Spacer()
-                Image(systemName: client.flightReady ?
-                      "checkmark.shield.fill" : "lock.shield.fill")
-                    .foregroundStyle(client.flightReady ? green : amber)
-            }
-            HStack(spacing: 5) {
-                flightButton("ARM", icon: "lock.open",
-                             enabled: client.flightReady &&
-                                      telemetry?.isFlying == false) {
-                    client.send(.armFlight)
-                }
-                flightButton("TAKEOFF", icon: "arrow.up",
-                             enabled: client.flightReady && client.flightArmed &&
-                                      telemetry?.isFlying == false) {
-                    actionToConfirm = .takeoff
-                }
-                flightButton("LAND", icon: "arrow.down",
-                             enabled: client.connected && client.flightKeyVerified &&
-                                      aircraftLinked && telemetry?.isFlying == true) {
-                    actionToConfirm = .land
-                }
-            }
-            HStack {
-                Circle()
-                    .fill(client.djiSimulatorActive ? green : amber)
-                    .frame(width: 6, height: 6)
-                Text(client.djiSimulatorActive ? "DJI SIMULATOR" :
-                     (client.liveFlightAuthorized ? "LIVE FLIGHT AUTHORIZED" : "LIVE LOCKED"))
-                    .foregroundStyle(client.djiSimulatorActive || client.liveFlightAuthorized ?
-                                     green : amber)
-                Spacer()
-                Button("Flight Controls") {
-                    activeTool = .flight
-                    showToolPanel = true
-                }
-                .font(.system(size: 9))
-                .buttonStyle(.plain)
-                .foregroundStyle(green)
-            }
-            .font(.system(size: 10, weight: .bold, design: .monospaced))
-            Text(client.virtualSticksEnabled ?
-                 "Mac sticks engaged · SPACE + WASD" :
-                 "Physical DJI RC remains the primary fallback")
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.57))
-                .lineLimit(2)
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-    }
-
-    private func flightButton(_ title: String, icon: String, enabled: Bool,
-                              action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 14))
-                Text(title).font(.system(size: 9, weight: .semibold))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
-        }
-        .buttonStyle(.bordered)
-        .disabled(!enabled)
     }
 
     private func confirmTitle(_ action: GroundStationCommand.Action) -> String {
