@@ -66,7 +66,7 @@ final class PilotInputTests: XCTestCase {
         defer { keyboard.uninstall() }
         keyboard.beginFlight(in: window)
         XCTAssertEqual(link.requests, 1)
-        keyboard.keyChanged(code: 49, characters: " ", down: true, repeating: false)
+        XCTAssertTrue(keyboard.keyChanged(code: 49, characters: " ", down: true, repeating: false))
         keyboard.keyChanged(code: 13, characters: "w", down: true, repeating: false)
         XCTAssertTrue(keyboard.input.pressed.isEmpty)
         link.stickAuthority = .active
@@ -78,6 +78,12 @@ final class PilotInputTests: XCTestCase {
         XCTAssertEqual(link.transmitted, [PilotAxes(forward: 0.35)])
         keyboard.keyChanged(code: 49, characters: "", down: false, repeating: false)
         XCTAssertEqual(link.transmitted.last, PilotAxes())
+        keyboard.keyChanged(code: 49, characters: " ", down: true, repeating: false)
+        keyboard.keyChanged(code: 13, characters: "w", down: true, repeating: false)
+        XCTAssertEqual(link.transmitted.last, PilotAxes(forward: 0.35))
+        keyboard.keyChanged(code: 13, characters: "x", down: false, repeating: false)
+        XCTAssertEqual(link.transmitted.last, PilotAxes())
+        XCTAssertTrue(keyboard.preciseMode)
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
         XCTAssertEqual(keyboard.mode, .off)
         XCTAssertEqual(link.releases, 1)

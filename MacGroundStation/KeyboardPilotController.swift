@@ -134,18 +134,22 @@ final class KeyboardPilotController: NSObject, ObservableObject {
             if down { stop() }
             return true
         }
-        guard mode != .requesting else { return false }
+        if mode == .requesting {
+            // A held Space must not activate the focused button while the iPhone decides.
+            return PilotKey.resolve(code: code, characters: characters) != nil || characters.lowercased() == "x"
+        }
         if mode == .flight, client?.canPilot != true || client?.stickAuthority != .active {
             stop()
             return false
         }
-        if characters.lowercased() == "x" {
-            if down && !repeating { togglePrecision() }
-            return true
-        }
         if !down {
-            guard input.release(code: code) else { return false }
+            // A layout change can produce a different character for the same physical key.
+            guard input.release(code: code) else { return characters.lowercased() == "x" }
         } else {
+            if characters.lowercased() == "x" {
+                if !repeating { togglePrecision() }
+                return true
+            }
             guard let key = PilotKey.resolve(code: code, characters: characters) else { return false }
             if repeating { return true }
             input.press(key, code: code)

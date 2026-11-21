@@ -1,6 +1,7 @@
 // Bridge app build settings. Never put your actual DJI App Key in this file.
 DJI_SDK_APP_KEY = NOT_CONFIGURED
 // Mark the vendor headers as external in Swift's Clang importer.
-OTHER_SWIFT_FLAGS = $(inherited) -Xcc --system-header-prefix=DJISDK/ -Xcc --system-header-prefix=DJIWidget/
+// Clang loads the main SDK umbrella as Headers/DJISDK.h during module precompilation.
+OTHER_SWIFT_FLAGS = $(inherited) -Xcc --system-header-prefix=DJISDK/ -Xcc --system-header-prefix=Headers/DJISDK.h -Xcc --system-header-prefix=DJIWidget/
 // Xcode's optional include reads the untracked local key, if present.
 #include? "DJIKeys.xcconfig"
