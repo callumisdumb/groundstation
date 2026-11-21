@@ -63,5 +63,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build
           find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
 
-# This only verifies the build WITHOUT DJI CocoaPods. DJI SDK v4 and DJIWidget
-# still require a physical iPhone 15/Xcode hardware compatibility test.
+  djiwidget:
+    name: Build DJIWidget for iPhone
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the bridge pods
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          pod install
+      - name: Check the device library for compiler and archive warnings
+        shell: bash
+        run: |
+          xcodebuild -project Pods/Pods.xcodeproj -target DJIWidget \
+            -configuration Debug -sdk iphoneos CODE_SIGNING_ALLOWED=NO \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            CONFIGURATION_BUILD_DIR="$RUNNER_TEMP/djiwidget" build
+          xcrun ar -t "$RUNNER_TEMP/djiwidget/libDJIWidget.a" > "$RUNNER_TEMP/djiwidget-members"
+          if grep -Fxq 'DJIStreamCommon.o' "$RUNNER_TEMP/djiwidget-members"; then
+            echo 'DJIWidget contains the empty DJIStreamCommon object.' >&2
+            exit 1
+          fi

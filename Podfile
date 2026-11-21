@@ -8,6 +8,19 @@ project 'MavicGroundStation.xcodeproj'
 # requires compatibility checks with the real iPhone 15.
 target 'iOSFlightBridge' do
   pod 'DJI-SDK-iOS', '4.16.2'
-  pod 'DJIWidget', '~> 1.6.8'
+  pod 'DJIWidget', '1.6.8'
   pod 'DJIFlySafeDatabaseResource', '~> 01.00.01.18'
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    next unless target.name == 'DJIWidget'
+
+    target.build_configurations.each do |config|
+      # Keep diagnostics from the legacy decoder out of the app's build warnings.
+      config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
+      # In 1.6.8 this file only imports its header and produces an empty object.
+      config.build_settings['EXCLUDED_SOURCE_FILE_NAMES'] = '$(inherited) DJIStreamCommon.m'
+    end
+  end
 end
