@@ -1,6 +1,6 @@
 name: MavicGroundStation
 options:
-  bundleIdPrefix: com.example.mavic
+  bundleIdPrefix: com.benmacaulay.mavic
   deploymentTarget:
     macOS: "13.0"
     iOS: "16.0"
@@ -8,6 +8,8 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     GENERATE_INFOPLIST_FILE: YES
+    # GroundStation has no Siri or Shortcuts intents to extract.
+    LM_SKIP_METADATA_EXTRACTION: YES
 targets:
   MacGroundStation:
     type: application
@@ -23,9 +25,60 @@ targets:
     platform: iOS
     sources:
       - path: iOSFlightBridge
+        excludes:
+          - Info.plist
+          - InfoPlist-Additions.md
+          - DJIWidget-Bridging-Header.h
       - path: Shared/Protocol
+    configFiles:
+      Debug: Configurations/BridgeDebug.xcconfig
+      Release: Configurations/BridgeRelease.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.mavic.flightbridge
+        PRODUCT_BUNDLE_IDENTIFIER: com.benmacaulay.mavic.flightbridge
         TARGETED_DEVICE_FAMILY: "1"
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Connect to your Mac ground station over the local network."
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: iOSFlightBridge/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: iOSFlightBridge/DJIWidget-Bridging-Header.h
+
+  BridgeTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - Tests/Bridge
+      - Shared/Protocol
+      - iOSFlightBridge/BridgeListener.swift
+      - MacGroundStation/MissionLibrary.swift
+      - MacGroundStation/PilotInput.swift
+      - MacGroundStation/KeyboardPilotController.swift
+      - MacGroundStation/BridgeClient.swift
+      - MacGroundStation/GroundStationTheme.swift
+  WorkspaceTests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - Tests/MacUI
+    dependencies:
+      - target: MacGroundStation
+    settings:
+      base:
+        TEST_TARGET_NAME: MacGroundStation
+schemes:
+  MacGroundStation:
+    build:
+      targets:
+        MacGroundStation: all
+  iOSFlightBridge:
+    build:
+      targets:
+        iOSFlightBridge: all
+  GroundStationReview:
+    build:
+      targets:
+        MacGroundStation: all
+    test:
+      targets:
+        - BridgeTests
+        - WorkspaceTests

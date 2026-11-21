@@ -1,85 +1,214 @@
+import CoreLocation
 import SwiftUI
+
+enum GSWorkspace: String, CaseIterable, Identifiable {
+    case project = "Team"
+    case missions = "Flight Route Library"
+    case cockpit = "Virtual Cockpit"
+    case activity = "Activity"
+    var id: Self { self }
+
+    var shortcut: KeyEquivalent {
+        switch self {
+        case .project: return "1"
+        case .missions: return "2"
+        case .cockpit: return "3"
+        case .activity: return "4"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .project: return "person.2.fill"
+        case .missions: return "point.topleft.down.curvedto.point.bottomright.up"
+        case .cockpit: return "viewfinder"
+        case .activity: return "list.bullet.rectangle"
+        }
+    }
+}
 
 struct ContentView: View {
     @StateObject private var client = BridgeClient()
-    @State private var host = "192.168.1.100"
+    @StateObject private var liveVideo = H264LiveVideoClient()
+    @StateObject private var keyboard = KeyboardPilotController()
+    @StateObject private var missions = MissionLibrary()
+    @State private var workspace: GSWorkspace = .project
+    @AppStorage("GroundStationBridgeIP") private var host = ""
+    @State private var satellite = true
+    @State private var followAircraft = true
+    @State private var track: [CLLocationCoordinate2D] = []
+    @State private var trackSource: String?
+    @State private var showConnection = false
+    @State private var cockpitRoutePreview: MapRequest?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Mavic Ground Station").font(.largeTitle.bold())
-                    Text("Prototype • telemetry link only").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Circle()
-                    .fill(client.connected ? .green : .red)
-                    .frame(width: 10, height: 10)
-                Text(client.connected ? "Bridge connected" : "Disconnected")
-                    .font(.headline)
-            }
-
-            GroupBox("iPhone bridge connection") {
-                HStack {
-                    TextField("iPhone IP address", text: $host)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 220)
-                    Button("Connect") { client.connect(host: host, port: 8765) }
-                    Button("Disconnect") { client.disconnect() }
-                }
-                .padding(.vertical, 6)
-            }
-
-            GroupBox("Aircraft telemetry") {
-                if let status = client.latestStatus {
-                    Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
-                        GridRow {
-                            metric("Connection", status.payload.connectionState ?? "—")
-                            metric("Aircraft", status.payload.aircraftModel ?? "—")
-                        }
-                        GridRow {
-                            metric("Battery", status.payload.batteryPercent.map { "\($0)%" } ?? "—")
-                            metric("Altitude", status.payload.altitudeMeters.map { String(format: "%.1f m", $0) } ?? "—")
-                        }
-                        GridRow {
-                            metric("Latitude", status.payload.latitude.map { String(format: "%.6f", $0) } ?? "—")
-                            metric("Longitude", status.payload.longitude.map { String(format: "%.6f", $0) } ?? "—")
-                        }
-                        GridRow {
-                            metric("Speed", status.payload.speedMetersPerSecond.map { String(format: "%.1f m/s", $0) } ?? "—")
-                            metric("Source", status.payload.simulated == true ? "SIMULATED" : "DJI")
-                        }
-                    }
-                    .padding(.vertical, 8)
-                } else {
-                    Text("Waiting for telemetry…").foregroundStyle(.secondary).padding()
+        HStack(spacing: 0) {
+            if workspace != .cockpit { rail }
+            TimelineView(.periodic(from: .now, by: 1)) { clock in
+                let status = ProjectStatus(client: client, now: clock.date)
+                VStack(spacing: 0) {
+                    if workspace == .cockpit { cockpitMenu(status) }
+                    workspaceView(status: status, now: clock.date)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    statusBar(status)
                 }
             }
-
-            GroupBox("System log") {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(client.logs, id: \.self) { line in
-                            Text(line).font(.system(.caption, design: .monospaced))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 130)
-            }
-
-            Spacer()
-            Text("Prototype only. Aircraft values are simulated until the DJI adapter is implemented.")
-                .font(.footnote).foregroundStyle(.orange)
         }
-        .padding(22)
+        .background(GSPalette.background)
+        .tint(GSPalette.highlight)
+        .preferredColorScheme(.dark)
+        .focusedSceneValue(\.groundStationWorkspace, $workspace)
+        .onAppear { keyboard.install(client: client) }
+        .onDisappear {
+            keyboard.uninstall()
+            liveVideo.disconnect()
+            client.disconnect()
+        }
+        .onChange(of: workspace) { destination in
+            keyboard.stop()
+            if destination != .cockpit { cockpitRoutePreview = nil }
+        }
+        .onChange(of: showConnection) { shown in
+            if shown { keyboard.stop() }
+        }
+        .onChange(of: client.connected) { connected in
+            track.removeAll()
+            trackSource = nil
+            if connected, let key = client.bridgeKey {
+                liveVideo.connect(host: host, pairingCode: client.pairingCode, bridgeKey: key)
+            } else {
+                liveVideo.disconnect()
+                keyboard.stop()
+            }
+        }
+        .onChange(of: client.stickAuthority) { _ in keyboard.syncAuthority() }
+        .onChange(of: client.djiSimulatorActive) { _ in keyboard.stop() }
+        .onChange(of: client.lastTelemetryAt) { _ in recordPosition() }
     }
 
-    private func metric(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.monospacedDigit().weight(.semibold))
+    @ViewBuilder
+    private func workspaceView(status: ProjectStatus, now: Date) -> some View {
+        switch workspace {
+        case .project:
+            ProjectWorkspace(client: client, missions: missions, status: status, satellite: $satellite,
+                             track: track, openConnection: { showConnection = true },
+                             openCockpit: { workspace = .cockpit }, openRoutes: { workspace = .missions })
+        case .missions:
+            MissionWorkspace(missions: missions, client: client, satellite: $satellite, track: track, status: status,
+                             closeLibrary: { workspace = .project }, openCockpit: {
+                                 guard let points = missions.selectedRoute?.waypoints, !points.isEmpty else { return }
+                                 cockpitRoutePreview = MapRequest(action: .fit(points.map(\.coordinate)))
+                                 workspace = .cockpit
+                             })
+        case .cockpit:
+            FlightCockpitView(client: client, video: liveVideo, keyboard: keyboard, missions: missions,
+                              satellite: $satellite, followAircraft: $followAircraft, routePreview: $cockpitRoutePreview, track: track,
+                              status: status, now: now, openConnection: { showConnection = true })
+        case .activity:
+            ActivityWorkspace(client: client)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var rail: some View {
+        VStack(spacing: 5) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.system(size: 17, weight: .bold))
+                .frame(height: 42)
+                .accessibilityLabel("GroundStation")
+            Divider().overlay(.white.opacity(0.25)).padding(.horizontal, 8)
+            ForEach(GSWorkspace.allCases) { item in
+                let selected = item == workspace
+                Button { workspace = item } label: {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15, weight: .medium))
+                        .frame(width: 34, height: 32)
+                        .background(selected ? Color.white.opacity(0.23) : .clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .help(item.rawValue)
+                .accessibilityLabel(item.rawValue)
+                .accessibilityIdentifier("nav-\(item.rawValue)")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer()
+            Button { showConnection.toggle() } label: {
+                Image(systemName: client.connected ? "link.circle.fill" : "link.circle")
+                    .font(.system(size: 18)).frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Bridge connection")
+            .help("Bridge connection")
+
+        }
+        .padding(.bottom, 8)
+        .frame(width: 46)
+        .foregroundStyle(.white)
+        .background(GSPalette.rail)
+    }
+
+    private func cockpitMenu(_ status: ProjectStatus) -> some View {
+        HStack(spacing: 10) {
+            ProjectIconButton(label: "Return to project", symbol: "chevron.left") { workspace = .project }
+            Text("Virtual Cockpit").fontWeight(.semibold)
+            Divider().frame(height: 14)
+            Text("Mavic Pro Project").foregroundStyle(GSPalette.muted)
+            Spacer()
+            Circle().fill(status.tint).frame(width: 6, height: 6)
+            Text(status.rawValue)
+            ProjectIconButton(label: "Flight Route Library", symbol: GSWorkspace.missions.icon) { workspace = .missions }
+            ProjectIconButton(label: "Bridge connection", symbol: "link") { showConnection = true }
+        }
+        .font(.system(size: 12)).padding(.horizontal, 6).frame(height: 38).background(GSPalette.side)
+    }
+
+    private func statusBar(_ status: ProjectStatus) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(status.tint).frame(width: 6, height: 6)
+            Text(status.rawValue)
+            if client.connected {
+                Divider().frame(height: 11)
+                Text(liveVideo.lastVideoAt == nil ? liveVideo.streamStatus : "H.264")
+                    .lineLimit(1)
+            }
+            Spacer()
+            if client.connected && client.flightKeyVerified {
+                Text(client.liveFlightAuthorized ? "Live flight authorized" :
+                     (client.djiSimulatorActive ? "DJI Simulator" : "Live flight locked"))
+            }
+            if workspace != .cockpit {
+                Button { workspace = .cockpit } label: { Label("Open cockpit", systemImage: "gamecontroller") }
+                    .buttonStyle(.plain).foregroundStyle(GSPalette.cyan).help("Virtual Cockpit (⌘3)")
+                Divider().frame(height: 11)
+            }
+            Button(client.connected ? "Connection" : "Connect bridge") { showConnection = true }
+                .buttonStyle(.plain)
+                .foregroundStyle(GSPalette.cyan)
+                .popover(isPresented: $showConnection, arrowEdge: .top) {
+                    BridgeConnectionView(client: client, host: $host)
+                }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(GSPalette.muted)
+        .padding(.horizontal, 10)
+        .frame(height: 25)
+        .background(GSPalette.background)
+    }
+
+    private func recordPosition() {
+        guard let payload = client.latestStatus?.payload, payload.validAircraft else {
+            track.removeAll()
+            trackSource = nil
+            return
+        }
+        let source = (payload.djiSimulatorActive == true ? "sim/" : "aircraft/") + (payload.aircraftModel ?? "")
+        if source != trackSource {
+            track.removeAll()
+            trackSource = source
+        }
+        guard (client.aircraftDataAge(at: Date()) ?? .infinity) <= 3, let point = payload.aircraftPoint else { return }
+        if let last = track.last, last.latitude == point.latitude && last.longitude == point.longitude { return }
+        track.append(point)
+        if track.count > 400 { track.removeFirst(track.count - 400) }
     }
 }

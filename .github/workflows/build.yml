@@ -1,0 +1,89 @@
+name: Validate Mac and iPhone bridge scaffold
+on:
+  push:
+    branches:
+      - feature/dji-v4-readonly
+  pull_request:
+    branches:
+      - main
+      - feature/dji-v4-readonly
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Compile scaffold (no DJI pods)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build Mac application
+        run: |
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme MacGroundStation \
+            -configuration Debug \
+            -destination "platform=macOS,arch=$(uname -m)" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Build iPhone bridge in simulator-only mode
+        run: |
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme iOSFlightBridge \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Run bridge regressions and exercise the Mac workspaces
+        id: review
+        run: |
+          xcodebuild test -project MavicGroundStation.xcodeproj -scheme GroundStationReview \
+            -destination "platform=macOS,arch=$(uname -m)" -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/groundstation-review.xcresult" \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES
+      - name: Collect native application screenshots
+        if: always() && steps.review.outcome != 'skipped'
+        run: |
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/groundstation-review.xcresult" \
+            --output-path "$RUNNER_TEMP/groundstation-screens"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.review.outcome != 'skipped'
+        with:
+          name: groundstation-workspace-screens
+          path: ${{ runner.temp }}/groundstation-screens
+          if-no-files-found: warn
+      - name: Verify optional Apple Core ML object detection model bundles
+        run: |
+          bash scripts/install_vehicle_detector.sh
+          xcodegen generate
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme MacGroundStation \
+            -configuration Debug \
+            -destination "platform=macOS,arch=$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/groundstation-ai" \
+            CODE_SIGNING_ALLOWED=NO build
+          find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
+
+  djiwidget:
+    name: Build DJIWidget and the iPhone flight bridge
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the bridge pods
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          pod install
+      - name: Check the device library for compiler and archive warnings
+        shell: bash
+        run: |
+          xcodebuild -project Pods/Pods.xcodeproj -target DJIWidget \
+            -configuration Debug -sdk iphoneos CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/djiwidget-build.log"
+          if grep -Ei '(^|[[:space:]])warning:' "$RUNNER_TEMP/djiwidget-build.log"; then
+            exit 1
+          fi
+      - name: Build the bridge with the DJI SDK for a physical iPhone
+        run: |
+          xcodebuild -workspace MavicGroundStation.xcworkspace -scheme iOSFlightBridge \
+            -configuration Debug -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO build

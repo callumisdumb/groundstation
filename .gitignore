@@ -1,4 +1,4 @@
-# Generated project; XcodeGen source of truth is project.yml
+# XcodeGen project generated locally
 *.xcodeproj/
 *.xcworkspace/
 Pods/
@@ -12,3 +12,9 @@ xcuserdata/
 *.mobileprovision
 *.p12
 *.key
+
+# Local DJI SDK key. Never upload.
+Configurations/DJIKeys.xcconfig
+
+# Optional Apple Core ML object detection weights downloaded locally.
+MacGroundStation/Models/GroundStationDetector.mlmodel

@@ -1,30 +1,13 @@
-# Test Plan
+# GroundStation verification
 
-## A: Local bridge (current prototype)
+## Automated review
 
-- Install and run the Mac application.
-- Install and run the iPhone application on a physical iPhone 15.
-- Confirm Local Network permission is granted on iPhone.
-- Confirm both devices are on the same Wi-Fi LAN.
-- Enter the iPhone IPv4 address shown on-screen into the Mac app, port 8765.
-- Confirm the Mac displays a SIMULATED status every second.
-- Verify disconnect/reconnect, and that no take-off, landing or movement controls exist.
-- Do not test the prototype on a public network.
+Generate the Xcode project and run the GroundStationReview scheme on macOS. It includes bridge and route regressions plus a UI workflow through Team, Route Library, waypoint editing, cockpit, Activity and connection settings. Xcode records the actual Mac windows as test attachments. The no-DJI workflow also builds the Mac app, iPhone simulator app and optional Core ML resource.
 
-## B: DJI read-only integration (not implemented)
+## Physical integration
 
-- Build and run the *official* DJI Mobile SDK iOS Swift sample.
-- Connect the original Mavic Pro controller to iPhone 15 with compatible USB-C data cable.
-- Confirm SDK registration and product connection.
-- Confirm read-only aircraft state, GPS and battery callbacks.
-- Replace only the simulated status provider, preserving the \`simulated\` marker distinction.
-- Re-test network disconnects and unexpected aircraft disconnects.
+Record the Xcode, iOS, app revision, controller and aircraft firmware versions for each run. The hardware integration requires a DJI developer app key and the pinned CocoaPods. The no-SDK simulator reports demo status and has no camera feed. [DJI app setup](DJIAppSetup.md)
 
-## C: Video (not implemented)
+For a stationary bench test, verify the original controller, iPhone 15 data cable and official DJI sample detect the aircraft. Check that the Mac distinguishes controller-only, real aircraft, DJI simulator, demo and stale states. Compare displayed telemetry with the device, verify disconnection clears live readings and check foreground/background transitions on the phone. Record latency and recovery separately for the camera and telemetry.
 
-- Render SDK video locally on iPhone using the documented sample.
-- Transport encoded video to Mac only after measuring latency and dropped frames.
-
-## D: Flight control (not implemented)
-
-Separate flight-safety engineering review required: operator arming, bounded command set, command sequence numbers/freshness, link-loss watchdog, RTH configuration, simulator testing, controlled ground testing, physical controller fallback and UK CAA compliance.
+Verify two-device pairing, wrong credentials, key rotation, clipboard expiry and reconnecting with the new code. Validate VoiceOver navigation and readability at the operator’s display settings. Flight behaviour and physical RC takeover need separate hardware evidence. [Security and usability review](WorkspaceReview.md) · [Hardware limitations](LiveFlight.md)

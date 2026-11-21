@@ -1,79 +1,58 @@
 # Mavic Ground Station
 
-A development prototype for the **original DJI Mavic Pro**, with an Apple Silicon **Mac ground station** and an **iPhone 15 communications bridge** connected to the standard DJI remote controller.
+GroundStation is a native macOS console and iPhone communications bridge for the original DJI Mavic Pro. The Mac opens on a FlightHub 2-style project map. The iPhone connects to the original remote controller and relays telemetry and video over a paired local connection.
 
-> **Prototype only, not flight-ready.** The included Mac↔iPhone network connection displays **SIMULATED** telemetry. No DJI connection, video, waypoint execution, or flight controls have been implemented. Never use this prototype for flight decisions.
+| Mac workspace | What you can do |
+| --- | --- |
+| Team | View bridge and aircraft status, change your call sign, search the map, switch layers and recenter on a device or saved route. |
+| Flight Route Library | Create and edit local waypoint drafts, reopen earlier routes and export GeoJSON. |
+| Virtual Cockpit | Open the Pilot station with ⌘3, see the next flight step and press ? for keyboard practice or the live control map. |
+| Activity | Search session events and filter flight-control replies. |
 
-## Hardware
+The no-SDK build supplies simulated bridge data. The hardware integration targets DJI Mobile SDK v4.16.2. Live operation, video latency and controller takeover still require validation on the original Mavic Pro and iPhone. [Design, security and usability review](Documentation/WorkspaceReview.md) · [Hardware validation](Documentation/TestingPlan.md)
 
-- Apple Silicon Mac and Xcode
-- iPhone 15 (USB-C), with Apple development signing configured
-- Original DJI Mavic Pro and standard remote controller
-- DJI Mavic Pro USB-C controller cable, or suitable data cable through the controller's bottom USB port (disconnect the side cable when using the bottom port)
-- Trusted Wi-Fi network shared by iPhone and Mac
+## Build
 
-## Project layout
+Use Xcode and XcodeGen on a Mac. The deployment targets are macOS 13 and iOS 16. In a checkout of the revision you want to run, generate the project and open it.
 
-```text
-MacGroundStation/        macOS SwiftUI ground-control dashboard
-iOSFlightBridge/         iPhone SwiftUI network bridge; DJI integration placeholder
-Shared/Protocol/         versioned JSON wire models shared by both targets
-Documentation/           DJI integration and testing plans
-project.yml              XcodeGen project definition
-Podfile                  DJI-SDK-iOS 4.16.2 (legacy integration milestone)
+```bash
+brew install xcodegen
+xcodegen generate
+open MavicGroundStation.xcodeproj
 ```
 
-## Quick start — local simulated telemetry
+Build the `MacGroundStation` scheme on the Mac. For an iPhone, choose `iOSFlightBridge`, configure your Apple development team and build it from the same revision. Install the pinned DJI CocoaPods and open the generated workspace only for the hardware integration. Keep the DJI app key in the gitignored configuration file. [DJI app setup](Documentation/DJIAppSetup.md) · [Compatibility notes](Documentation/DJIIntegration.md)
 
-1. Install **Xcode** and launch it once. Configure Apple developer signing for physical iPhone deployment.
-2. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`.
-3. Clone and generate:
+## Pair the bridge
 
-   ```bash
-   git clone https://github.com/callumisdumb/groundstation.git
-   cd groundstation
-   xcodegen generate
-   open MavicGroundStation.xcodeproj
-   ```
+1. Open the bridge on the iPhone and keep it in the foreground. Allow local network access. The Mac and phone must be able to reach each other on the local network.
+2. In the Mac project, choose **Connect bridge**. Enter the address and current six-digit session code from the phone.
+3. On the phone choose **Copy bridge key for Mac**. Paste it into **Bridge key** on the Mac, then choose **Connect**. The Mac saves the key in Keychain. An existing paired flight key can also supply the bridge credential when the bridge-key field is empty.
+4. For pilot access, open **Flight-control pairing** on the paired Mac, paste the phone’s flight key and choose **Verify flight key**.
 
-4. Select the `MacGroundStation` scheme, then build and run on your Mac.
-5. Select `iOSFlightBridge`, set your **Apple Team** and a unique bundle ID, then build and run on your actual iPhone 15.
-6. Put both devices on the same trusted Wi-Fi network. Allow the iPhone app to access the Local Network and keep it in the foreground.
-7. The iPhone bridge listens on TCP port **8765** and displays its local IP. Enter that IP in the Mac app and press **Connect**.
-8. Confirm that the Mac dashboard shows one **simulated** status message per second.
+The phone renews the short code when the listeners restart. Copy for Mac uses the system clipboard for 60 seconds and supports Universal Clipboard. On a Mac without Handoff, transfer the key through a trusted channel. **Reset paired keys** on the phone disconnects the current Mac and revokes the old keys. Update both apps together when upgrading from the earlier plaintext protocol.
 
-The initial TCP link is **unauthenticated and unencrypted**. Use on a trusted LAN **only**; never forward its port to the internet. A later remote-monitoring phase must add authentication and encryption.
+Telemetry and command traffic use TCP port 8765 and H.264 uses TCP port 8766. Each port has its own authenticated TLS session. Pairing a bridge leaves live flight locked. [Transport review](Documentation/WorkspaceReview.md#trust-boundary) · [Live video](Documentation/LiveVideo.md)
 
-## DJI SDK integration: next milestone
+## Keyboard flight
 
-The original Mavic Pro is documented by DJI's legacy **Mobile SDK v4**. The iOS SDK version targeted here is **4.16.2**, but compatibility with modern iOS, Apple Silicon Xcode, an iPhone 15 and your firmware versions is **not verified**.
+Open **⌘3 → Flight setup** and select the live aircraft or DJI simulator. The Pilot station shows the next available action. After confirmed takeoff, choose **Fly with keyboard** and wait for the iPhone grant. Hold **Space** plus **WASD** or the **arrows** to translate, **Q/E** to turn and **C/Z** to ascend or descend. Release Space for neutral or press **Esc** to hand control back. Open **? → Practice keys** to try the controls entirely on the Mac. [Controls and flight readiness](Documentation/VirtualCockpit.md#virtual-cockpit)
 
-Before changing the prototype:
+## Hardware and operating guides
 
-1. Obtain a [DJI developer account](https://developer.dji.com/) and an SDK application key.
-2. Clone DJI's [official iOS Mobile SDK sample](https://github.com/dji-sdk/Mobile-SDK-iOS).
-3. Follow the [official Quick Start](https://developer.dji.com/mobile-sdk/documentation/quick-start/index.html), including the `DJISDKAppKey` setting, CocoaPods, signing, and controller connection.
-4. First confirm the official sample registers, activates (if required), and detects your real aircraft.
-5. Port only proven DJI registration, connection and read-only aircraft-state code into `iOSFlightBridge/DJIAdapter.swift`. Convert state changes to `GroundStationMessage` and forward to the Mac.
-6. Keep DJI framework types in the iOS app; the Mac should know only about the shared protocol.
+The hardware setup uses an Apple Silicon Mac, iPhone 15, original Mavic Pro and its standard remote controller with a compatible USB-C data cable. The controller’s side cable must be disconnected when using its bottom USB port.
 
-The root `Podfile` is a **future integration aid**, not required for the initial simulated demo. If used, generate the Xcode project first, run `pod install`, and open the resulting `.xcworkspace`. Legacy SDK constraints may require a different pinned toolchain.
+- [Project, Route Library and cockpit](Documentation/VirtualCockpit.md)
+- [Mac controls and device checks](Documentation/MacControlTesting.md)
+- [Experimental live-flight authorization and limitations](Documentation/LiveFlight.md)
+- [Local Vision and optional Core ML model](Documentation/AITracking.md)
 
-## Roadmap
+## Verification
 
-- [x] Mac and iPhone SwiftUI project scaffold
-- [x] Local TCP/JSON link and simulated status dashboard
-- [ ] Validate original Mavic Pro + iPhone 15 with official DJI sample
-- [ ] Live read-only telemetry, battery and GPS from DJI SDK
-- [ ] Video streaming to Mac
-- [ ] Map and mission planning
-- [ ] Carefully engineered flight control with arming, timeouts and physical-controller override
-- [ ] Authenticated/encrypted remote monitoring
+```bash
+xcodegen generate
+xcodebuild test -project MavicGroundStation.xcodeproj -scheme GroundStationReview \
+  -destination 'platform=macOS' -parallel-testing-enabled NO
+```
 
-## Safety
-
-No live flight commands are present. Never assume network loss means the aircraft has stopped. Keep DJI's physical controller and built-in failsafes available, and comply with applicable [UK CAA drone rules](https://www.caa.co.uk/drones/) including visual-line-of-sight obligations.
-
-## Documentation
-
-Read [DJI integration](Documentation/DJIIntegration.md) and [test plan](Documentation/TestingPlan.md) before extending this prototype.
+The review scheme uses a temporary route library for UI tests. GitHub Actions builds the Mac and iPhone simulator targets, compiles the complete DJI-enabled iPhone bridge, tests the keyboard and workspace flows, collects native screenshots and verifies optional model packaging.
