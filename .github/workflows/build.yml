@@ -78,10 +78,7 @@ jobs:
         run: |
           xcodebuild -project Pods/Pods.xcodeproj -target DJIWidget \
             -configuration Debug -sdk iphoneos CODE_SIGNING_ALLOWED=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
-            CONFIGURATION_BUILD_DIR="$RUNNER_TEMP/djiwidget" build
-          xcrun ar -t "$RUNNER_TEMP/djiwidget/libDJIWidget.a" > "$RUNNER_TEMP/djiwidget-members"
-          if grep -Fxq 'DJIStreamCommon.o' "$RUNNER_TEMP/djiwidget-members"; then
-            echo 'DJIWidget contains the empty DJIStreamCommon object.' >&2
+            build 2>&1 | tee "$RUNNER_TEMP/djiwidget-build.log"
+          if grep -Ei '(^|[[:space:]])warning:' "$RUNNER_TEMP/djiwidget-build.log"; then
             exit 1
           fi

@@ -1,4 +1,5 @@
-platform :ios, '16.0'
+bridge_ios_version = '16.0'
+platform :ios, bridge_ios_version
 
 # XcodeGen creates this project locally; its generated scheme contains the bridge target.
 project 'MavicGroundStation.xcodeproj'
@@ -17,6 +18,7 @@ post_install do |installer|
     next unless target.name == 'DJIWidget'
 
     target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = bridge_ios_version
       # Keep diagnostics from the legacy decoder out of the app's build warnings.
       config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
       # In 1.6.8 this file only imports its header and produces an empty object.
