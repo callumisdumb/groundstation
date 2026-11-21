@@ -3,10 +3,11 @@ import SwiftUI
 struct ActivityWorkspace: View {
     @ObservedObject var client: BridgeClient
     @State private var query = ""
+    @State private var flightOnly = false
     @State private var confirmingClear = false
 
     private var events: [GroundStationLogEntry] {
-        client.logs.filter { query.isEmpty || $0.text.localizedCaseInsensitiveContains(query) }
+        client.logs.filter { (!flightOnly || $0.flightEvent) && (query.isEmpty || $0.text.localizedCaseInsensitiveContains(query)) }
     }
 
     var body: some View {
@@ -15,6 +16,10 @@ struct ActivityWorkspace: View {
                 Label("Session activity", systemImage: "list.bullet.rectangle")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
+                Picker("Event type", selection: $flightOnly) {
+                    Text("All events").tag(false)
+                    Text("Flight control").tag(true)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 175)
                 TextField("Search activity", text: $query).textFieldStyle(.roundedBorder).frame(width: 180)
                 Button("Clear display") { confirmingClear = true }.disabled(client.logs.isEmpty)
             }
@@ -31,7 +36,7 @@ struct ActivityWorkspace: View {
             if events.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "clock").font(.title2)
-                    Text(query.isEmpty ? "No events in this session" : "No matching events")
+                    Text(!query.isEmpty ? "No matching events" : (flightOnly ? "No flight-control events" : "No events in this session"))
                         .font(.callout)
                 }.foregroundStyle(GSPalette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

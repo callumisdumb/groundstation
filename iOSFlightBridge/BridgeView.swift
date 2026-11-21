@@ -36,15 +36,18 @@ struct BridgeView: View {
                         Label("Copy bridge key for Mac", systemImage: "doc.on.doc")
                     }.disabled(server.bridgeKey.isEmpty || !server.running)
                 } header: {
-                    Text("Ground Station")
+                    Text("Pair this iPhone")
                 } footer: {
                     Text("On the Mac, open Connect bridge. Enter the Wi-Fi address, session code and bridge key.")
                 }
-                Section("Aircraft") {
-                    Label(server.djiStatus, systemImage: "airplane").font(.subheadline)
-                    DJIFramePreviewSurface().frame(height: 140)
-                        .listRowInsets(EdgeInsets())
-                        .accessibilityLabel("Aircraft camera decoder")
+                Section("Pilot station") {
+                    LabeledContent("Mac operator", value: server.macConnected ? "Paired" : "Offline")
+                    LabeledContent("Flight control", value: server.macConnected ? server.pilotStatus : "Mac disconnected")
+                    if server.macConnected {
+                        Button("Disconnect Mac and release control", role: .destructive) {
+                            server.disconnectPilot()
+                        }
+                    }
                 }
                 Section("Connection") {
                     Text(server.lastEvent).font(.callout).foregroundStyle(.secondary)
@@ -73,6 +76,12 @@ struct BridgeView: View {
                     }
                 } footer: {
                     Text("Copy for Mac uses the system clipboard, including Universal Clipboard when enabled. Copied keys expire after 60 seconds.")
+                }
+                Section("Aircraft") {
+                    Label(server.djiStatus, systemImage: "airplane").font(.subheadline)
+                    DJIFramePreviewSurface().frame(height: 140)
+                        .listRowInsets(EdgeInsets())
+                        .accessibilityLabel("Aircraft camera decoder")
                 }
                 if let copyNotice, phase == .active {
                     TimelineView(.periodic(from: .now, by: 1)) { clock in

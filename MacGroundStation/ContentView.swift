@@ -8,6 +8,15 @@ enum GSWorkspace: String, CaseIterable, Identifiable {
     case activity = "Activity"
     var id: Self { self }
 
+    var shortcut: KeyEquivalent {
+        switch self {
+        case .project: return "1"
+        case .missions: return "2"
+        case .cockpit: return "3"
+        case .activity: return "4"
+        }
+    }
+
     var icon: String {
         switch self {
         case .project: return "person.2.fill"
@@ -47,27 +56,29 @@ struct ContentView: View {
         .background(GSPalette.background)
         .tint(GSPalette.highlight)
         .preferredColorScheme(.dark)
+        .focusedSceneValue(\.groundStationWorkspace, $workspace)
         .onAppear { keyboard.install(client: client) }
         .onDisappear {
             keyboard.uninstall()
             liveVideo.disconnect()
             client.disconnect()
         }
-        .onChange(of: workspace) { _ in keyboard.keyboardEnabled = false }
+        .onChange(of: workspace) { _ in keyboard.stop() }
         .onChange(of: showConnection) { shown in
-            if shown { keyboard.keyboardEnabled = false }
+            if shown { keyboard.stop() }
         }
         .onChange(of: client.connected) { connected in
-            keyboard.connectionChanged()
             track.removeAll()
             trackSource = nil
             if connected, let key = client.bridgeKey {
                 liveVideo.connect(host: host, pairingCode: client.pairingCode, bridgeKey: key)
             } else {
                 liveVideo.disconnect()
-                keyboard.keyboardEnabled = false
+                keyboard.stop()
             }
         }
+        .onChange(of: client.stickAuthority) { _ in keyboard.syncAuthority() }
+        .onChange(of: client.djiSimulatorActive) { _ in keyboard.stop() }
         .onChange(of: client.lastTelemetryAt) { _ in recordPosition() }
     }
 
@@ -80,11 +91,11 @@ struct ContentView: View {
                              openCockpit: { workspace = .cockpit }, openRoutes: { workspace = .missions })
         case .missions:
             MissionWorkspace(missions: missions, client: client, satellite: $satellite, track: track, status: status,
-                             closeLibrary: { workspace = .project })
+                             closeLibrary: { workspace = .project }, openCockpit: { workspace = .cockpit })
         case .cockpit:
             FlightCockpitView(client: client, video: liveVideo, keyboard: keyboard, missions: missions,
                               satellite: $satellite, followAircraft: $followAircraft, track: track,
-                              status: status, now: now)
+                              status: status, now: now, openConnection: { showConnection = true })
         case .activity:
             ActivityWorkspace(client: client)
         }
@@ -156,6 +167,11 @@ struct ContentView: View {
             if client.connected && client.flightKeyVerified {
                 Text(client.liveFlightAuthorized ? "Live flight authorized" :
                      (client.djiSimulatorActive ? "DJI Simulator" : "Live flight locked"))
+            }
+            if workspace != .cockpit {
+                Button { workspace = .cockpit } label: { Label("Open cockpit", systemImage: "gamecontroller") }
+                    .buttonStyle(.plain).foregroundStyle(GSPalette.cyan).help("Virtual Cockpit (⌘3)")
+                Divider().frame(height: 11)
             }
             Button(client.connected ? "Connection" : "Connect bridge") { showConnection = true }
                 .buttonStyle(.plain)

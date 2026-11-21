@@ -15,7 +15,9 @@ struct FlightCockpitView: View {
     let track: [CLLocationCoordinate2D]
     let status: ProjectStatus
     let now: Date
+    let openConnection: () -> Void
     @State private var showKeyboard = false
+    @State private var simulatorSetup = false
 
     @State private var activeTool: CockpitTool = .aircraft
     @State private var showToolPanel = false
@@ -61,7 +63,11 @@ struct FlightCockpitView: View {
             let width = max(280, geometry.size.width * (mapFocused ? 0.46 : 0.32))
             HStack(spacing: 2) {
                 VStack(spacing: 2) {
-                    auxiliaryPane.frame(height: geometry.size.height * (mapFocused ? 0.22 : 0.45))
+                    PilotStation(client: client, keyboard: keyboard, status: status, showGuide: $showKeyboard,
+                                 openConnection: openConnection, openSetup: openFlightSetup,
+                                 confirmTakeoff: { confirm(.takeoff) })
+                        .frame(height: min(geometry.size.height * 0.58,
+                                           showKeyboard ? 274 : (mapFocused ? 148 : 168)))
                     mapPane
                 }
                 .frame(width: width)
@@ -81,7 +87,7 @@ struct FlightCockpitView: View {
             resetChecklist()
         }
         .confirmationDialog(
-            client.djiSimulatorActive ?
+            (client.djiSimulatorActive || actionToConfirm == .startDJISimulator) ?
                 "Confirm DJI Simulator command" : "Confirm REAL aircraft command",
             isPresented: Binding(
                 get: { actionToConfirm != nil },
@@ -96,7 +102,7 @@ struct FlightCockpitView: View {
                     }
                     if action == .land || action == .returnHome ||
                        action == .stopDJISimulator || action == .revokeLiveFlight {
-                        keyboard.keyboardEnabled = false
+                        keyboard.stop()
                         client.releaseVirtualSticks()
                     }
                     if action == .revokeLiveFlight {
@@ -112,8 +118,8 @@ struct FlightCockpitView: View {
             }
             Button("Cancel", role: .cancel) { actionToConfirm = nil }
         } message: {
-            Text(client.djiSimulatorActive
-                 ? "SIMULATOR ONLY: remove propellers. The physical remote controller must remain linked."
+            Text((client.djiSimulatorActive || actionToConfirm == .startDJISimulator)
+                 ? "Keep the remote linked and remove the propellers for the DJI simulator."
                  : "REAL AIRCRAFT: motors and propellers may start. Ensure a clear outdoor flight area, legal visual line of sight, and a pilot holding the physical DJI remote controller. Cancel if unsure.")
         }
     }
@@ -126,27 +132,15 @@ struct FlightCockpitView: View {
         liveFailsafeReviewed = false
     }
 
-    private var auxiliaryPane: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label("Auxiliary view", systemImage: "rectangle.on.rectangle")
-                Spacer()
-                Text("iPhone bridge").foregroundStyle(GSPalette.muted)
-            }
-            .font(.system(size: 11)).padding(.horizontal, 10)
-            .frame(height: 30).background(GSPalette.side)
-            Spacer()
-            Image(systemName: "video.slash").font(.system(size: 25, weight: .light))
-            Text("No auxiliary camera").font(.callout).padding(.top, 5)
-            Spacer()
-            HStack {
-                Label(status.rawValue, systemImage: "antenna.radiowaves.left.and.right")
-                Spacer()
-                Text(telemetry?.aircraftModel ?? "—").lineLimit(1)
-            }.font(.caption).padding(8).background(GSPalette.side)
-        }
-        .foregroundStyle(GSPalette.muted)
-        .frame(maxWidth: .infinity).background(Color(white: 0.075))
+    private func openFlightSetup() {
+        keyboard.stop()
+        activeTool = .flight
+        showToolPanel = true
+    }
+
+    private func confirm(_ action: GroundStationCommand.Action) {
+        keyboard.stop()
+        actionToConfirm = action
     }
 
     private var mapPane: some View {
@@ -361,6 +355,7 @@ struct FlightCockpitView: View {
 
     private func toolIcon(_ symbol: String, tip: String, tool: CockpitTool) -> some View {
         Button {
+            keyboard.stop()
             withAnimation(.easeOut(duration: 0.18)) {
                 if showToolPanel && activeTool == tool {
                     showToolPanel = false
@@ -488,28 +483,27 @@ struct FlightCockpitView: View {
 
             Divider().overlay(line)
 
-            if !client.djiSimulatorActive {
+            if client.djiSimulatorActive {
+                Button("Stop DJI simulator…") { confirm(.stopDJISimulator) }
+                    .disabled(telemetry?.isFlying != false)
+            } else if client.liveFlightAuthorized {
                 liveFlightSection
-                Divider().overlay(line)
             } else {
-                Text("DJI simulator controls").font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(green)
-                Button("Stop Simulator") {
-                    actionToConfirm = .stopDJISimulator
+                Picker("Flight environment", selection: $simulatorSetup) {
+                    Text("Live flight").tag(false)
+                    Text("DJI simulator").tag(true)
+                }.pickerStyle(.segmented)
+                if simulatorSetup {
+                    Text("The DJI simulator runs on the linked aircraft. Remove its propellers for ground testing.")
+                        .font(.caption).foregroundStyle(GSPalette.muted)
+                    Button("Start DJI simulator…") { confirm(.startDJISimulator) }
+                        .disabled(!aircraftLinked || !client.flightKeyVerified ||
+                                  telemetry?.isFlying != false || telemetry?.motorsOn != false)
+                } else {
+                    liveFlightSection
                 }
-                .disabled(telemetry?.isFlying == true)
-                .controlSize(.small)
-                Divider().overlay(line)
             }
-
-            if !client.liveFlightAuthorized && !client.djiSimulatorActive {
-                Button("Start DJI Simulator instead") {
-                    actionToConfirm = .startDJISimulator
-                }
-                .disabled(!aircraftLinked || !client.flightKeyVerified ||
-                          telemetry?.isFlying == true)
-                .controlSize(.small)
-            }
+            Divider().overlay(line)
             Text("Takeoff / landing")
                 .font(.system(size: 11, weight: .bold))
             HStack {
@@ -518,7 +512,7 @@ struct FlightCockpitView: View {
                 }
                 .disabled(!client.flightReady || telemetry?.isFlying != false)
                 Button("Take off") {
-                    actionToConfirm = .takeoff
+                    confirm(.takeoff)
                 }
                 .disabled(!client.flightReady || !client.flightArmed ||
                           telemetry?.isFlying != false)
@@ -527,14 +521,14 @@ struct FlightCockpitView: View {
 
             HStack {
                 Button {
-                    actionToConfirm = .land
+                    confirm(.land)
                 } label: {
                     Label("Land", systemImage: "arrow.down")
                 }
                 .disabled(!client.connected || !client.flightKeyVerified ||
                           !lastAirborne)
                 Button {
-                    actionToConfirm = .returnHome
+                    confirm(.returnHome)
                 } label: {
                     Label("Return Home", systemImage: "house.fill")
                 }
@@ -544,35 +538,11 @@ struct FlightCockpitView: View {
             .controlSize(.small)
 
             Divider().overlay(line)
-            Text("KEYBOARD MOVEMENT")
-                .font(.system(size: 10, weight: .bold))
-            Toggle("Capture WASD + Space", isOn: $keyboard.keyboardEnabled)
-                .disabled(!client.flightReady || !client.virtualSticksEnabled)
-            Toggle("Precision mode (X)", isOn: $keyboard.preciseMode)
-            Button {
-                client.send(.enableSticks)
-            } label: {
-                Label("Enable DJI Virtual Sticks", systemImage: "gamecontroller.fill")
+            Button("Show keyboard guide") {
+                keyboard.stop()
+                showToolPanel = false
+                showKeyboard = true
             }
-            .disabled(!client.flightReady || telemetry?.isFlying != true ||
-                      client.virtualSticksEnabled)
-            Button {
-                keyboard.keyboardEnabled = false
-                client.releaseVirtualSticks()
-            } label: {
-                Label("Release to physical controller", systemImage: "hand.raised")
-            }
-            .disabled(!client.connected)
-            Text(keyboard.status)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(green)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("WASD translate · Q/E yaw · C/Z climb · hold SPACE · X precision · ESC to hand off to RC.")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider().overlay(line)
             Text(client.lastControlResult)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(amber)
@@ -602,7 +572,7 @@ struct FlightCockpitView: View {
 
             if client.liveFlightAuthorized {
                 Button(role: .destructive) {
-                    actionToConfirm = .revokeLiveFlight
+                    confirm(.revokeLiveFlight)
                 } label: {
                     Label("Revoke live controls", systemImage: "lock.fill")
                         .frame(maxWidth: .infinity)
@@ -611,14 +581,14 @@ struct FlightCockpitView: View {
             } else {
                 Toggle("Clear outdoor launch / landing area", isOn: $liveClearArea)
                 Toggle("Pilot holding linked DJI remote controller", isOn: $livePilotAtRC)
-                Toggle("Legal visual line of sight; no nearby people", isOn: $liveVLOSAndRegulations)
+                Toggle("Visual line of sight and clear of bystanders", isOn: $liveVLOSAndRegulations)
                 Toggle("RTH height, home point and failsafe checked", isOn: $liveFailsafeReviewed)
                 Text("Type ENABLE LIVE FLIGHT")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 TextField("ENABLE LIVE FLIGHT", text: $liveConfirmPhrase)
                     .textFieldStyle(.roundedBorder)
                 Button {
-                    actionToConfirm = .authorizeLiveFlight
+                    confirm(.authorizeLiveFlight)
                 } label: {
                     Label("Authorize real aircraft (15m)", systemImage: "checkmark.shield")
                         .frame(maxWidth: .infinity)
@@ -627,10 +597,15 @@ struct FlightCockpitView: View {
                 .controlSize(.small)
             }
             if !client.livePreflightReady && !client.liveFlightAuthorized {
-                Text("Preflight telemetry must show: genuine grounded Mavic Pro, 40%+ battery, ≥10 GPS satellites, home point, ready IMU and fresh aircraft data.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(amber)
-                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(client.livePreflightChecks) { check in
+                    HStack(spacing: 6) {
+                        Image(systemName: check.passed ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(check.passed ? green : amber)
+                        Text(check.label)
+                        Spacer()
+                        Text(check.value).foregroundStyle(GSPalette.muted)
+                    }.font(.system(size: 11))
+                }
             }
         }
     }
@@ -655,18 +630,11 @@ struct FlightCockpitView: View {
     private var cameraInstruments: some View {
         VStack(spacing: 0) {
             HStack {
-                if showKeyboard {
-                    keyboardDeck.frame(width: 230, height: 145).background(.black.opacity(0.78))
-                }
                 Spacer()
                 instrumentGauge.frame(width: 130, height: 145)
                     .background(.black.opacity(0.44))
                 Spacer()
-                Button {
-                    showKeyboard.toggle()
-                } label: { Image(systemName: "keyboard").padding(9) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Keyboard controls").help("Keyboard controls")
+
             }
             .padding(.horizontal, 12)
             HStack(spacing: 10) {
@@ -674,10 +642,7 @@ struct FlightCockpitView: View {
                 performance("SPEED", telemetry?.speedText ?? "—", icon: "speedometer")
                 performance("V. SPEED", telemetry?.velocityZ.map { String(format: "%.1f m/s", $0) } ?? "—", icon: "arrow.up.arrow.down")
                 performance("BATTERY", telemetry?.batteryText ?? "—", icon: "battery.75percent")
-                Button("Flight controls") {
-                    activeTool = .flight
-                    showToolPanel = true
-                }
+                Button("Flight controls", action: openFlightSetup)
                 .controlSize(.small)
             }
             .padding(10).background(.black.opacity(0.80))
@@ -733,58 +698,6 @@ struct FlightCockpitView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-    private var keyboardDeck: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                deckLabel("KEYBOARD")
-                Spacer()
-                Toggle("Capture cockpit keyboard", isOn: $keyboard.keyboardEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
-                    .help("Capture keyboard input. Movement requires separate flight authorization.")
-            }
-            HStack(spacing: 12) {
-                VStack(spacing: 3) {
-                    HStack(spacing: 3) {
-                        keyCap("Q"); keyCap("W"); keyCap("E")
-                    }
-                    HStack(spacing: 3) {
-                        keyCap("A"); keyCap("S"); keyCap("D")
-                    }
-                    HStack(spacing: 3) {
-                        keyCap("Z"); keyCap("C")
-                        keyCap("SPACE", wide: true)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("WASD  MOVE")
-                    Text("Q/E  YAW")
-                    Text("C/Z  ALT")
-                    Text("SPACE  HOLD")
-                }
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.55))
-            }
-            Text(keyboard.status)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(amber)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(11)
-    }
-
-    private func keyCap(_ title: String, wide: Bool = false) -> some View {
-        let active = keyboard.keysDown.contains(title == "SPACE" ? "space" : title.lowercased())
-        return Text(title)
-            .font(.system(size: title == "SPACE" ? 7 : 10, weight: .bold, design: .monospaced))
-            .foregroundStyle(active ? .black : .white.opacity(0.8))
-            .frame(width: wide ? 42 : 26, height: 22)
-            .background(active ? green : Color.white.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-    }
-
     private func confirmTitle(_ action: GroundStationCommand.Action) -> String {
         switch action {
         case .startDJISimulator: return "Start DJI Simulator"

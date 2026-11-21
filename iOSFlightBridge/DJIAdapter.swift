@@ -38,6 +38,15 @@ final class DJIAdapter: NSObject {
     private var lastAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
 
     #if canImport(DJISDK)
+    private var stickSessionSimulator: Bool?
+    private weak var unconfirmedRelease: DJIFlightController?
+    private var physicalRemoteLinked: Bool {
+        (DJISDKManager.product() as? DJIAircraft)?.remoteController?.isConnected == true
+    }
+    private var stickEnableInFlight = false
+    private var cancelStickEnable = false
+    private var stickReleaseInFlight = false
+    private var releaseReplies: [(Error?) -> Void] = []
     private weak var controller: DJIFlightController?
     private var lastFlightState: DJIFlightControllerState?
     #endif
@@ -71,14 +80,14 @@ final class DJIAdapter: NSObject {
         if !hasAircraft {
             liveFlightAuthorizedUntil = .distantPast
             activeTrack.lostMacConnection()
-            if sticksEnabled { disableSticks() }
+            if sticksEnabled || stickEnableInFlight { disableSticks() }
             controller = nil
             lastFlightState = nil
             flightArmedUntil = .distantPast
             publish {
                 $0.aircraftSampledAt = nil
                 $0.aircraftConnected = false
-                $0.controllerConnected = product != nil
+                $0.controllerConnected = self.physicalRemoteLinked
                 $0.aircraftModel = nil
                 $0.connectionState = product == nil ? "DJI disconnected" :
                     "Controller detected — aircraft NOT linked"
@@ -116,11 +125,15 @@ final class DJIAdapter: NSObject {
             actualController?.delegate = self
             subscribeToBattery()
         }
+        if let previous = unconfirmedRelease, !stickReleaseInFlight {
+            if previous.isConnected { releaseDJIControl(on: previous) }
+            else { unconfirmedRelease = nil }
+        }
         let simActive = actualController?.simulator?.isSimulatorActive == true
         if !simActive && liveFlightAuthorized {
             // Authorization is not allowed to survive a lost/unsafe
             // flight-controller state. Revoke without issuing aircraft motions.
-            if Date().timeIntervalSince(lastAircraftStateAt) > 2.0 ||
+            if !physicalRemoteLinked || Date().timeIntervalSince(lastAircraftStateAt) > 2.0 ||
                (snapshot.batteryPercent ?? 0) < 20 ||
                snapshot.imuPreheating == true {
                 liveFlightAuthorizedUntil = .distantPast
@@ -129,6 +142,7 @@ final class DJIAdapter: NSObject {
             }
         }
         publish {
+            $0.controllerConnected = self.physicalRemoteLinked
             $0.djiSimulatorActive = simActive
             $0.virtualSticksEngaged = self.sticksEnabled
             $0.liveFlightAuthorized = !simActive && self.liveFlightAuthorized
@@ -212,6 +226,10 @@ final class DJIAdapter: NSObject {
                    "Live flight not authorized. Complete preflight and approve from Mac.")
             return
         }
+        if flightAction && !emergencyAction && !physicalRemoteLinked {
+            result(command, false, "A linked physical controller is required")
+            return
+        }
         if flightAction && !emergencyAction &&
            Date().timeIntervalSince(lastAircraftStateAt) > 1.5 {
             result(command, false, "Flight telemetry stale; movement rejected")
@@ -224,7 +242,7 @@ final class DJIAdapter: NSObject {
 
         switch command.action {
         case .authorizeLiveFlight:
-            guard !simulatorOn, !liveFlightAuthorized,
+            guard !simulatorOn, !liveFlightAuthorized, physicalRemoteLinked,
                   snapshot.controllerConnected == true,
                   snapshot.aircraftModel?.lowercased().contains("mavic pro") == true,
                   snapshot.isFlying == false, snapshot.motorsOn == false,
@@ -254,9 +272,9 @@ final class DJIAdapter: NSObject {
             }
             result(command, true, "Live flight control revoked; physical controller retains override")
         case .startDJISimulator:
-            guard let simulator = fc.simulator, !simulator.isSimulatorActive,
+            guard let simulator = fc.simulator, !simulator.isSimulatorActive, physicalRemoteLinked,
                   !liveFlightAuthorized,
-                  snapshot.isFlying != true, snapshot.motorsOn != true else {
+                  snapshot.isFlying == false, snapshot.motorsOn == false else {
                 result(command, false, "DJI simulator unavailable or aircraft is not safely grounded")
                 return
             }
@@ -387,15 +405,13 @@ final class DJIAdapter: NSObject {
             }
             fc.turnOffMotors(completion: completion)
         case .enableSticks:
-            guard snapshot.isFlying == true,
-                  (simulatorOn || (liveFlightAuthorized &&
-                     snapshot.homeLocationSet == true &&
-                     (snapshot.batteryPercent ?? 0) >= 25 &&
-                     (snapshot.satelliteCount ?? 0) >= 8)),
-                  snapshot.activeTrackMovementEnabled != true else {
-                result(command, false, "Virtual Sticks require active flight and usable battery")
+            guard !stickEnableInFlight, !stickReleaseInFlight, unconfirmedRelease == nil, !sticksEnabled,
+                  mayUseSticks(fc, simulator: simulatorOn) else {
+                result(command, false, "Keyboard requires a ready airborne aircraft and released controls.")
                 return
             }
+            stickEnableInFlight = true
+            cancelStickEnable = false
             fc.rollPitchControlMode = .velocity
             fc.rollPitchCoordinateSystem = .body
             fc.yawControlMode = .angularVelocity
@@ -403,24 +419,31 @@ final class DJIAdapter: NSObject {
             fc.setVirtualStickModeEnabled(true, withCompletion: { [weak self] error in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    if error == nil {
+                    self.stickEnableInFlight = false
+                    if let error {
+                        self.completeStickRelease(nil)
+                        completion(error)
+                    } else if self.cancelStickEnable || !self.mayUseSticks(fc, simulator: simulatorOn) {
+                        // A handoff or link change can arrive before the SDK completion.
+                        // Undo the grant on its original controller without accepting any input.
+                        self.releaseDJIControl(on: fc)
+                        self.result(command, false, "Keyboard request cancelled")
+                    } else {
+                        self.stickSessionSimulator = simulatorOn
                         self.sticksEnabled = true
                         self.lastSticksAt = Date()
                         self.lastAxes = (0, 0, 0, 0)
                         self.startStickWatchdog()
                         self.publish {
                             $0.virtualSticksEngaged = true
-                            $0.flightControlStatus = simulatorOn ?
-                                "DJI simulator receiving Mac keyboard commands" :
-                                "Live Virtual Stick enabled — physical RC available"
+                            $0.flightControlStatus = simulatorOn ? "DJI simulator · Mac keyboard" : "Live aircraft · Mac keyboard"
                         }
+                        completion(nil)
                     }
-                    completion(error)
                 }
             })
         case .disableSticks:
-            disableSticks()
-            result(command, true, "Virtual Stick mode released to DJI controller")
+            disableSticks(completion: completion)
         case .activeTrackPrepare, .activeTrackConfirm, .activeTrackStop:
             result(command, false, "ActiveTrack command routing error")
         case .verifyFlightKey:
@@ -474,21 +497,22 @@ final class DJIAdapter: NSObject {
         }
     }
 
+    #if canImport(DJISDK)
+    private func mayUseSticks(_ fc: DJIFlightController, simulator: Bool) -> Bool {
+        guard fc === controller, fc.isConnected, physicalRemoteLinked,
+              snapshot.isFlying == true, snapshot.activeTrackMovementEnabled != true,
+              Date().timeIntervalSince(lastAircraftStateAt) < 1.5,
+              (fc.simulator?.isSimulatorActive == true) == simulator else { return false }
+        return simulator || (liveFlightAuthorized && snapshot.homeLocationSet == true &&
+            (snapshot.batteryPercent ?? 0) >= 25 && (snapshot.satelliteCount ?? 0) >= 8 &&
+            snapshot.imuPreheating == false)
+    }
+    #endif
+
     private func stickTick() {
         #if canImport(DJISDK)
-        guard sticksEnabled, let fc = controller, fc.isConnected,
-              snapshot.isFlying == true,
-              Date().timeIntervalSince(lastAircraftStateAt) < 1.6 else {
-            disableSticks()
-            return
-        }
-        let simulatorOn = fc.simulator?.isSimulatorActive == true
-        guard simulatorOn ||
-              (liveFlightAuthorized &&
-               snapshot.homeLocationSet == true &&
-               (snapshot.batteryPercent ?? 0) >= 25 &&
-               (snapshot.satelliteCount ?? 0) >= 8 &&
-               snapshot.imuPreheating == false) else {
+        guard sticksEnabled, let fc = controller, let simulator = stickSessionSimulator,
+              mayUseSticks(fc, simulator: simulator) else {
             disableSticks()
             return
         }
@@ -505,29 +529,56 @@ final class DJIAdapter: NSObject {
         #endif
     }
 
-    private func disableSticks() {
+    private func disableSticks(completion: ((Error?) -> Void)? = nil) {
         stickTimer?.invalidate()
         stickTimer = nil
-        #if canImport(DJISDK)
-        guard sticksEnabled else { return }
-        sticksEnabled = false
         lastAxes = (0, 0, 0, 0)
-        // Always send a neutral vector before relinquishing control.
-        // DJI's v4 firmware may otherwise briefly keep the last nonzero
-        // movement command if the Virtual Stick mode is disabled.
-        if let fc = controller, fc.isConnected {
-            let neutral = DJIVirtualStickFlightControlData(
-                pitch: 0, roll: 0, yaw: 0, verticalThrottle: 0)
-            fc.send(neutral, withCompletion: nil)
-            fc.send(neutral, withCompletion: nil)
-            fc.setVirtualStickModeEnabled(false, withCompletion: nil)
-        }
-        publish {
-            $0.virtualSticksEngaged = false
-            $0.flightControlStatus = "Virtual Stick released · physical RC in control"
-        }
+        #if canImport(DJISDK)
+        stickSessionSimulator = nil
+        if let completion { releaseReplies.append(completion) }
+        if stickEnableInFlight { cancelStickEnable = true; return }
+        if stickReleaseInFlight { return }
+        if let previous = unconfirmedRelease { releaseDJIControl(on: previous); return }
+        guard sticksEnabled else { completeStickRelease(nil); return }
+        sticksEnabled = false
+        releaseDJIControl(on: controller)
+        #else
+        completion?(nil)
         #endif
     }
+
+    #if canImport(DJISDK)
+    private func releaseDJIControl(on fc: DJIFlightController?) {
+        guard let fc, fc.isConnected else {
+            unconfirmedRelease = nil
+            completeStickRelease(NSError(domain: "DJIFlightBridge", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Controller link lost during handoff"]))
+            return
+        }
+        stickReleaseInFlight = true
+        let neutral = DJIVirtualStickFlightControlData(pitch: 0, roll: 0, yaw: 0, verticalThrottle: 0)
+        fc.send(neutral, withCompletion: nil)
+        fc.setVirtualStickModeEnabled(false, withCompletion: { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.unconfirmedRelease = error == nil ? nil : fc
+                self.completeStickRelease(error)
+                self.publish {
+                    $0.virtualSticksEngaged = false
+                    $0.flightControlStatus = error == nil ? "Mac keyboard released" : "Handoff unconfirmed · check remote controller"
+                }
+            }
+        })
+    }
+
+    private func completeStickRelease(_ error: Error?) {
+        stickReleaseInFlight = false
+        let replies = releaseReplies
+        releaseReplies.removeAll()
+        for reply in replies { reply(error) }
+    }
+    #endif
+
 }
 
 #if canImport(DJISDK)
@@ -594,6 +645,7 @@ extension DJIAdapter: DJISDKManagerDelegate {
 
 extension DJIAdapter: DJIFlightControllerDelegate {
     func flightController(_ fc: DJIFlightController, didUpdate state: DJIFlightControllerState) {
+        guard fc === controller else { return }
         lastFlightState = state
         let sampledAt = Date()
         lastAircraftStateAt = sampledAt
@@ -603,7 +655,7 @@ extension DJIAdapter: DJIFlightControllerDelegate {
         publish {
             $0.aircraftSampledAt = sampledAt
             $0.aircraftConnected = true
-            $0.controllerConnected = true
+            $0.controllerConnected = self.physicalRemoteLinked
             $0.connectionState = "DJI aircraft linked (real telemetry)"
             $0.aircraftModel = DJISDKManager.product()?.model
             $0.simulated = false

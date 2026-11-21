@@ -9,6 +9,8 @@ import Network
 @MainActor
 final class BridgeServer: ObservableObject {
     @Published private(set) var running = false
+    @Published private(set) var macConnected = false
+    @Published private(set) var pilotStatus = "Physical controller"
     @Published private(set) var localAddress: String?
     @Published private(set) var lastEvent = "Waiting"
     @Published private(set) var djiStatus = "DJI SDK not linked (simulator mode)"
@@ -44,6 +46,7 @@ final class BridgeServer: ObservableObject {
             djiAdapter.onUpdate = { [weak self] payload in
                 Task { @MainActor in
                     self?.latestDJIStatus = payload
+                    self?.pilotStatus = payload.flightControlStatus ?? "Physical controller"
                     self?.djiStatus = payload.connectionState ?? "DJI status unavailable"
                 }
             }
@@ -71,6 +74,7 @@ final class BridgeServer: ObservableObject {
         videoServer.onFailure = { [weak self] error in self?.listenerFailed(error) }
         listener.onReady = { [weak self] conn in
             guard let self else { return }
+            self.macConnected = true
             self.lastEvent = "Paired Mac connected"
             self.sendHello()
             self.startStatusStream()
@@ -80,6 +84,7 @@ final class BridgeServer: ObservableObject {
             guard let self else { return }
             self.timer?.invalidate()
             self.timer = nil
+            self.macConnected = false
             self.djiAdapter.networkDisconnected()
             self.commandBuffer.removeAll()
             self.badPairingAttempts = 0
@@ -118,6 +123,8 @@ final class BridgeServer: ObservableObject {
         running = false
         lastEvent = "Stopped"
     }
+
+    func disconnectPilot() { endSession() }
 
     private func endSession() {
         if let client { listener.close(client) }

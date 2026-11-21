@@ -10,6 +10,7 @@ struct MissionWorkspace: View {
     let track: [CLLocationCoordinate2D]
     let status: ProjectStatus
     let closeLibrary: () -> Void
+    let openCockpit: () -> Void
 
     @State private var editing = false
     @State private var settings = false
@@ -52,6 +53,9 @@ struct MissionWorkspace: View {
                             Text(current.name).fontWeight(.semibold).lineLimit(1)
                             Text("Waypoint route").font(.caption).foregroundStyle(GSPalette.muted)
                             Spacer()
+                            Button(action: openCockpit) { Label("View in cockpit", systemImage: "viewfinder") }
+                                .buttonStyle(.plain).foregroundStyle(GSPalette.cyan)
+                                .help("Show this draft on the cockpit map")
                             Toggle("Satellite", isOn: $satellite).toggleStyle(.checkbox)
                         }.padding(.trailing, 12).frame(height: 40).background(GSPalette.side)
                         HStack(spacing: 0) {

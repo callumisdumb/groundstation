@@ -108,6 +108,15 @@ struct ProjectWorkspace: View {
                                 Button(client.connected ? "Manage" : "Connect", action: openConnection)
                                     .buttonStyle(.plain).foregroundStyle(GSPalette.cyan)
                             }.padding(9)
+                            if client.connected {
+                                Divider()
+                                HStack {
+                                    Label("Flight key", systemImage: "key")
+                                    Spacer()
+                                    Text(client.flightKeyVerified ? "Verified" : "Unpaired")
+                                        .foregroundStyle(client.flightKeyVerified ? GSPalette.green : GSPalette.amber)
+                                }.padding(9)
+                            }
                         }
                         .font(.system(size: 12))
                         .background(GSPalette.panel)

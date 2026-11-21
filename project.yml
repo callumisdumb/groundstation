@@ -47,6 +47,8 @@ targets:
       - Shared/Protocol
       - iOSFlightBridge/BridgeListener.swift
       - MacGroundStation/MissionLibrary.swift
+      - MacGroundStation/PilotInput.swift
+      - MacGroundStation/KeyboardPilotController.swift
   WorkspaceTests:
     type: bundle.ui-testing
     platform: macOS

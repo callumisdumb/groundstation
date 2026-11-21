@@ -7,14 +7,16 @@ struct GroundStationLogEntry: Identifiable {
     let id = UUID()
     let time = Date()
     let text: String
+    let flightEvent: Bool
 }
 
 @MainActor
-final class BridgeClient: ObservableObject {
+final class BridgeClient: ObservableObject, KeyboardFlightLink {
     @Published private(set) var connecting = false
     @Published private(set) var connectionStatus = "Offline"
     @Published private(set) var connected = false
-    @Published private(set) var virtualSticksEnabled = false
+    @Published private(set) var stickAuthority = StickAuthority.idle
+    var virtualSticksEnabled: Bool { stickAuthority == .active }
     @Published private(set) var flightKeyVerified = false
     @Published private(set) var liveFlightAcknowledged = false
     @Published var flightKeyInput = FlightKeyStore.load() ?? ""
@@ -39,7 +41,8 @@ final class BridgeClient: ObservableObject {
     var flightArmed: Bool { Date() < flightArmExpires }
     private var lastStatusLog = Date.distantPast
     private var sticksTimer: Timer?
-    private var stickAxes = (pitch: 0.0, roll: 0.0, yaw: 0.0, vertical: 0.0)
+    private var stickAxes = PilotAxes()
+    private var flightKeyVerificationID: String?
 
     func aircraftDataAge(at now: Date) -> TimeInterval? {
         guard let message = latestStatus, let sampledAt = message.payload.aircraftSampledAt,
@@ -60,19 +63,40 @@ final class BridgeClient: ObservableObject {
 
     /// Mac-side readiness is advisory: the iPhone rechecks all preflight
     /// constraints against its own DJI SDK state before executing commands.
-    var livePreflightReady: Bool {
-        guard connected, flightKeyVerified, !djiSimulatorActive,
-              latestStatus?.payload.aircraftConnected == true,
-              latestStatus?.payload.simulated == false,
-              latestStatus?.payload.controllerConnected == true,
-              let p = latestStatus?.payload,
-              let age = aircraftDataAge(at: Date()), age < 1.5 else { return false }
-        return p.aircraftModel?.lowercased().contains("mavic pro") == true &&
-            p.isFlying == false && p.motorsOn == false &&
-            (p.batteryPercent ?? 0) >= 40 &&
-            (p.satelliteCount ?? 0) >= 10 &&
-            p.homeLocationSet == true && p.imuPreheating == false &&
-            p.aircraftPoint != nil
+    struct PreflightCheck: Identifiable {
+        let label: String
+        let value: String
+        let passed: Bool
+        var id: String { label }
+    }
+
+    var livePreflightChecks: [PreflightCheck] {
+        let p = latestStatus?.payload
+        let age = aircraftDataAge(at: Date())
+        let model = p?.aircraftModel ?? "Unknown"
+        let gpsReady = (p?.satelliteCount ?? 0) >= 10 && p?.aircraftPoint != nil
+        return [
+            .init(label: "Flight key", value: flightKeyVerified ? "Verified" : "Unverified",
+                  passed: connected && flightKeyVerified),
+            .init(label: "Aircraft", value: model, passed: p?.aircraftConnected == true &&
+                  p?.simulated == false && !djiSimulatorActive && model.lowercased().contains("mavic pro")),
+            .init(label: "Remote controller", value: p?.controllerConnected == true ? "Linked" : "Unconfirmed",
+                  passed: p?.controllerConnected == true),
+            .init(label: "Flight state", value: p?.isFlying == false && p?.motorsOn == false ? "Grounded" : "Unconfirmed",
+                  passed: p?.isFlying == false && p?.motorsOn == false),
+            .init(label: "Battery · min 40%", value: p?.batteryText ?? "—", passed: (p?.batteryPercent ?? 0) >= 40),
+            .init(label: "GPS fix · min 10", value: p?.satelliteCount.map { "\($0) sats" } ?? "—", passed: gpsReady),
+            .init(label: "Home point", value: p?.homeLocationSet == true ? "Set" : "Unconfirmed", passed: p?.homeLocationSet == true),
+            .init(label: "IMU", value: p?.imuPreheating == false ? "Ready" : "Unconfirmed", passed: p?.imuPreheating == false),
+            .init(label: "Aircraft sample", value: age.map { String(format: "%.1f s", $0) } ?? "—", passed: (age ?? .infinity) < 1.5)
+        ]
+    }
+
+    var livePreflightReady: Bool { livePreflightChecks.allSatisfy(\.passed) }
+
+    var canPilot: Bool {
+        flightReady && latestStatus?.payload.isFlying == true &&
+            latestStatus?.payload.controllerConnected == true && latestStatus?.payload.activeTrackMovementEnabled != true
     }
 
     var flightReady: Bool {
@@ -94,13 +118,14 @@ final class BridgeClient: ObservableObject {
         return livePreflightReady
     }
 
-    func saveFlightKey() {
-        flightKeyInput = flightKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard FlightKeyStore.save(flightKeyInput) else {
-            flightKeyVerified = false
+    func saveFlightKey(_ draft: String) {
+        guard !connecting, !connected || (!flightKeyVerified && stickAuthority == .idle) else { return }
+        let key = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard FlightKeyStore.save(key) else {
             addLog("Invalid flight key — copy the complete key from the iPhone")
             return
         }
+        flightKeyInput = key
         flightKeyVerified = false
         addLog("Flight key saved in Mac Keychain")
         verifyFlightKey()
@@ -108,7 +133,9 @@ final class BridgeClient: ObservableObject {
 
     func verifyFlightKey() {
         guard connected, FlightSecurity.validKey(flightKeyInput) else { return }
-        send(.verifyFlightKey)
+        let command = GroundStationCommand(pairingCode: pairingCode, action: .verifyFlightKey)
+        flightKeyVerificationID = command.id
+        sendCommand(command)
     }
 
     func connect(host: String, port: UInt16) {
@@ -183,7 +210,9 @@ final class BridgeClient: ObservableObject {
         connected = false
         connectionStatus = reason
         lastControlResult = "No flight commands sent"
-        virtualSticksEnabled = false
+        stickAuthority = .idle
+        stickAxes = PilotAxes()
+        flightKeyVerificationID = nil
         flightKeyVerified = false
         liveFlightAcknowledged = false
         flightArmExpires = .distantPast
@@ -232,6 +261,11 @@ final class BridgeClient: ObservableObject {
                 }
                 switch message.kind {
                 case .aircraftStatus:
+                    if let previous = latestStatus?.payload.djiSimulatorActive,
+                       message.payload.djiSimulatorActive != previous {
+                        releaseVirtualSticks()
+                        flightArmExpires = .distantPast
+                    }
                     latestStatus = message
                     lastTelemetryAt = Date()
                     if message.payload.djiSimulatorActive == true {
@@ -242,8 +276,8 @@ final class BridgeClient: ObservableObject {
                         // before a stale telemetry packet.
                         liveFlightAcknowledged = authorized
                     }
-                    if let engaged = message.payload.virtualSticksEngaged {
-                        virtualSticksEnabled = engaged
+                    if stickAuthority == .active && (!canPilot || message.payload.virtualSticksEngaged != true) {
+                        releaseVirtualSticks()
                     }
                     if Date().timeIntervalSince(lastStatusLog) > 10 {
                         addLog("Telemetry updates received (\(message.payload.aircraftConnected == true ? "aircraft" : "controller only"))")
@@ -257,9 +291,10 @@ final class BridgeClient: ObservableObject {
                         lastFrameAt = Date()
                     }
                 case .commandResult:
-                    if let id = message.payload.commandID,
-                       let action = pendingActions.removeValue(forKey: id) {
-                        if action == .verifyFlightKey {
+                    let replyAction = message.payload.commandID.flatMap { pendingActions.removeValue(forKey: $0) }
+                    if let id = message.payload.commandID, let action = replyAction {
+                        if action == .verifyFlightKey, flightKeyVerificationID == id {
+                            flightKeyVerificationID = nil
                             flightKeyVerified = message.payload.commandAccepted == true
                         }
                         if action == .authorizeLiveFlight {
@@ -268,13 +303,22 @@ final class BridgeClient: ObservableObject {
                         if action == .revokeLiveFlight || action == .stopDJISimulator {
                             liveFlightAcknowledged = false
                         }
-                        if action == .enableSticks {
-                            virtualSticksEnabled = message.payload.commandAccepted == true
-                            if virtualSticksEnabled {
-                                stickAxes = (0, 0, 0, 0)
-                                startStickTimerIfNeeded()
-                                emitSticks()
+                        if action == .enableSticks, stickAuthority == .requesting(id) {
+                            if message.payload.commandAccepted != true {
+                                stickAuthority = .idle
+                            } else if canPilot {
+                                stickAuthority = .active
+                                stopSticks()
+                            } else {
+                                releaseVirtualSticks()
                             }
+                        }
+                        if action == .disableSticks, stickAuthority == .releasing(id) {
+                            guard message.payload.commandAccepted == true else {
+                                close(conn, reason: "Controller handoff unconfirmed. Check the physical remote.")
+                                return
+                            }
+                            stickAuthority = .idle
                         }
                         if action == .armFlight && message.payload.commandAccepted == true {
                             flightArmExpires = Date().addingTimeInterval(30)
@@ -282,12 +326,10 @@ final class BridgeClient: ObservableObject {
                         if action == .takeoff || action == .disarmFlight {
                             flightArmExpires = .distantPast
                         }
-                        if action == .disableSticks || action == .disarmFlight {
-                            virtualSticksEnabled = false
-                        }
+                        if action == .disarmFlight { releaseVirtualSticks() }
                     }
                     lastControlResult = message.payload.message ?? "Unknown command result"
-                    addLog("Command: \(lastControlResult)")
+                    addLog("Command: \(lastControlResult)", flightEvent: replyAction?.requiresEncryptedFlightLink == true)
                 case .error:
                     addLog("Bridge error: \(message.payload.message ?? "Unknown")")
                 default: break
@@ -364,17 +406,32 @@ final class BridgeClient: ObservableObject {
         }
     }
 
-    /// Forward bounded control velocities at 10 Hz. The Mac never sends an
-    /// isolated keyDown event and then leaves the aircraft moving indefinitely.
-    func startSticks(pitch: Double = 0, roll: Double = 0,
-                     yaw: Double = 0, vertical: Double = 0) {
-        guard flightReady, virtualSticksEnabled else { return }
-        let axes = [pitch, roll, yaw, vertical]
-        guard axes.allSatisfy({ $0.isFinite }) else { return }
-        stickAxes = (max(-0.8, min(0.8, pitch)),
-                     max(-0.8, min(0.8, roll)),
-                     max(-16, min(16, yaw)),
-                     max(-0.6, min(0.6, vertical)))
+    func requestVirtualSticks() {
+        guard canPilot, stickAuthority == .idle else { return }
+        let command = GroundStationCommand(pairingCode: pairingCode, action: .enableSticks)
+        stickAuthority = .requesting(command.id)
+        sendCommand(command)
+        checkStickReplyTimeout(for: stickAuthority)
+    }
+
+    private func checkStickReplyTimeout(for expected: StickAuthority) {
+        guard expected != .idle else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, self.stickAuthority == expected else { return }
+            if case .releasing = expected, let conn = self.connection {
+                self.close(conn, reason: "Controller handoff unconfirmed. Check the physical remote.")
+            } else {
+                self.releaseVirtualSticks()
+            }
+        }
+    }
+
+    func startSticks(_ axes: PilotAxes) {
+        guard canPilot, virtualSticksEnabled,
+              axes.forward.isFinite, axes.right.isFinite, axes.yaw.isFinite, axes.climb.isFinite,
+              hypot(axes.forward, axes.right) <= 0.800001, abs(axes.yaw) <= 16, abs(axes.climb) <= 0.6 else { return }
+        stickAxes = axes
         startStickTimerIfNeeded()
         emitSticks()
     }
@@ -384,7 +441,7 @@ final class BridgeClient: ObservableObject {
         sticksTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                guard self.flightReady, self.virtualSticksEnabled else {
+                guard self.canPilot, self.virtualSticksEnabled else {
                     self.releaseVirtualSticks()
                     return
                 }
@@ -395,16 +452,13 @@ final class BridgeClient: ObservableObject {
 
     private func emitSticks() {
         guard connected, virtualSticksEnabled else { return }
-        let command = GroundStationCommand(pairingCode: pairingCode, action: .sticks,
-                                           pitch: stickAxes.pitch, roll: stickAxes.roll,
-                                           yaw: stickAxes.yaw, vertical: stickAxes.vertical)
-        sendCommand(command)
+        sendCommand(stickAxes.command(pairingCode: pairingCode))
     }
 
     /// Dead-man key released: keep sending *neutral* inputs while the operator
     /// remains armed. Losing focus/connection explicitly exits Virtual Stick.
     func stopSticks() {
-        stickAxes = (0, 0, 0, 0)
+        stickAxes = PilotAxes()
         guard virtualSticksEnabled else { return }
         emitSticks()
         startStickTimerIfNeeded()
@@ -414,16 +468,21 @@ final class BridgeClient: ObservableObject {
     func releaseVirtualSticks() {
         sticksTimer?.invalidate()
         sticksTimer = nil
-        stickAxes = (0, 0, 0, 0)
-        if connected && virtualSticksEnabled {
-            emitSticks() // Neutral first, then disable the DJI Virtual Stick mode.
-            send(.disableSticks)
+        stickAxes = PilotAxes()
+        switch stickAuthority {
+        case .idle, .releasing: return
+        case .active: emitSticks()
+        case .requesting: break
         }
-        virtualSticksEnabled = false
+        guard connected else { stickAuthority = .idle; return }
+        let command = GroundStationCommand(pairingCode: pairingCode, action: .disableSticks)
+        stickAuthority = .releasing(command.id)
+        sendCommand(command)
+        checkStickReplyTimeout(for: stickAuthority)
     }
 
-    private func addLog(_ entry: String) {
-        logs.insert(GroundStationLogEntry(text: entry), at: 0)
+    private func addLog(_ entry: String, flightEvent: Bool = false) {
+        logs.insert(GroundStationLogEntry(text: entry, flightEvent: flightEvent), at: 0)
         if logs.count > 100 { logs.removeLast(logs.count - 100) }
     }
 }

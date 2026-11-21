@@ -1,163 +1,160 @@
 import AppKit
 import Combine
-import SwiftUI
 
-/// Desktop keyboard preview and (once separately verified) Virtual Stick input.
-/// Keyboard shortcuts never activate the aircraft by themselves. On release,
-/// focus loss, connection loss or disabling keyboard input, neutral commands
-/// and stop requests are issued.
-struct PilotAxes: Equatable {
-    var forward = 0.0
-    var strafe = 0.0
-    var turn = 0.0
-    var climb = 0.0
-    var isNeutral: Bool {
-        forward == 0 && strafe == 0 && turn == 0 && climb == 0
-    }
+@MainActor
+protocol KeyboardFlightLink: AnyObject {
+    var canPilot: Bool { get }
+    var stickAuthority: StickAuthority { get }
+    func requestVirtualSticks()
+    func releaseVirtualSticks()
+    func startSticks(_ axes: PilotAxes)
+    func stopSticks()
 }
 
 @MainActor
-final class KeyboardPilotController: ObservableObject {
-    @Published var preciseMode = true
-    @Published var keyboardEnabled = false {
-        didSet { if !keyboardEnabled { releaseAll() } }
-    }
-    @Published private(set) var keysDown: Set<String> = []
-    @Published private(set) var deadmanHeld = false
-    @Published private(set) var axes = PilotAxes()
-    @Published private(set) var status = "Keyboard inactive"
+final class KeyboardPilotController: NSObject, ObservableObject {
+    enum Mode { case off, practice, requesting, flight }
 
-    private weak var client: BridgeClient?
+    @Published private(set) var mode: Mode = .off
+    @Published private(set) var input = PilotInput()
+    @Published private(set) var preciseMode = true
+
+    private weak var client: KeyboardFlightLink?
+    private weak var captureWindow: NSWindow?
     private var eventMonitor: Any?
-    private var deactivationObserver: NSObjectProtocol?
-    private var sendingMovement = false
     private var lastAxes = PilotAxes()
+    var holdsSpace: Bool { input.pressed.contains(.hold) }
+    var status: String {
+        switch mode {
+        case .off: return "Keyboard off"
+        case .requesting: return "Waiting for the iPhone to grant control"
+        case .practice: return "Key practice · local to this Mac"
+        case .flight:
+            if !holdsSpace { return "Keyboard ready · hold Space to move" }
+            return lastAxes == PilotAxes() ? "Neutral input" : "Sending movement"
+        }
+    }
 
-    /// Tracks only keys used by the cockpit. W/S translation, A/D strafe,
-    /// Q/E yaw, C/Z altitude and SPACE as held-to-move interlock.
-    private let mapped: Set<String> = ["w", "a", "s", "d", "q", "e", "z", "c", "space", "x"]
-
-    func install(client: BridgeClient) {
+    func install(client: KeyboardFlightLink) {
         self.client = client
         guard eventMonitor == nil else { return }
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            guard let self else { return event }
-            return self.consume(event)
+        eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in self?.handle(event) == true ? nil : event }
+        let center = NotificationCenter.default
+        for name in [NSApplication.didResignActiveNotification, NSMenu.didBeginTrackingNotification,
+                     NSControl.textDidBeginEditingNotification, NSText.didBeginEditingNotification] {
+            center.addObserver(self, selector: #selector(interrupted), name: name, object: nil)
         }
-        deactivationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.releaseAll() }
-            }
+        for name in [NSWindow.didResignKeyNotification, NSWindow.willBeginSheetNotification] {
+            center.addObserver(self, selector: #selector(windowInterrupted(_:)), name: name, object: nil)
+        }
     }
 
     func uninstall() {
-        releaseAll()
+        stop()
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
         eventMonitor = nil
-        if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
-        deactivationObserver = nil
+        NotificationCenter.default.removeObserver(self)
         client = nil
     }
 
-    func releaseAll() {
-        // Escape, focus loss or switching screens releases DJI control
-        // authority. A normal SPACE release requests a neutral hover only.
-        client?.releaseVirtualSticks()
-        sendingMovement = false
-        lastAxes = PilotAxes()
-        keysDown.removeAll()
-        deadmanHeld = false
-        axes = PilotAxes()
-        status = keyboardEnabled ? "Keyboard ready: hold SPACE + direction" : "Keyboard inactive"
+    func beginPractice(in window: NSWindow?) {
+        guard mode == .off, client?.stickAuthority == .idle, let window else { return }
+        captureWindow = window
+        mode = .practice
     }
 
-    func connectionChanged() {
-        guard client?.connected == true else { releaseAll(); return }
-        if client?.virtualSticksEnabled != true && sendingMovement {
-            releaseAll()
-        }
+    func beginFlight(in window: NSWindow?) {
+        guard mode == .off, let client, client.canPilot, client.stickAuthority == .idle,
+              let window else { return }
+        captureWindow = window
+        mode = .requesting
+        client.requestVirtualSticks()
+        syncAuthority()
     }
 
-    private func consume(_ event: NSEvent) -> NSEvent? {
-        guard keyboardEnabled else { return event }
-        // Do not intercept passwords, IP fields or other normal text inputs.
-        if NSApp.keyWindow?.firstResponder is NSTextView {
-            releaseAll()
-            return event
-        }
-        guard NSApp.isActive, event.window == NSApp.keyWindow else {
-            releaseAll()
-            return event
-        }
-        let key = event.keyCode == 49 ? "space" :
-            (event.charactersIgnoringModifiers ?? "").lowercased()
-        if event.keyCode == 53 {
-            releaseAll() // ESC always disengages.
-            return nil
-        }
-        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty == false {
-            return event
-        }
-        guard mapped.contains(key) else { return event }
-        if key == "x" {
-            if event.type == .keyDown && !event.isARepeat {
-                preciseMode.toggle()
-                status = preciseMode ? "PRECISION mode · 0.35 m/s" : "NORMAL mode · 0.8 m/s"
+    func syncAuthority() {
+        guard mode == .requesting || mode == .flight else { return }
+        guard let client, client.canPilot else { stop(); return }
+        switch client.stickAuthority {
+        case .active:
+            if mode == .requesting {
+                input = PilotInput()
+                mode = .flight
             }
-            return nil
+        case .requesting: break
+        case .idle, .releasing: stop()
         }
-        if event.type == .keyDown {
-            if event.isARepeat { return nil }
-            keysDown.insert(key)
-        } else if event.type == .keyUp {
-            keysDown.remove(key)
-        }
-        updateAxes()
-        return nil
     }
 
-    private func updateAxes() {
-        deadmanHeld = keysDown.contains("space")
-        let keyset = keysDown
-        func component(_ positive: String, _ negative: String, _ maxSpeed: Double) -> Double {
-            (keyset.contains(positive) ? maxSpeed : 0) -
-            (keyset.contains(negative) ? maxSpeed : 0)
-        }
-        let travel = preciseMode ? 0.35 : 0.8
-        let rotation = preciseMode ? 8.0 : 16.0
-        let climbRate = preciseMode ? 0.25 : 0.6
-        axes = PilotAxes(
-            forward: component("w", "s", travel),
-            strafe: component("d", "a", travel),
-            turn: component("e", "q", rotation),
-            climb: component("c", "z", climbRate))
+    func stop() {
+        let heldAuthority = mode == .requesting || mode == .flight
+        mode = .off
+        captureWindow = nil
+        input = PilotInput()
+        lastAxes = PilotAxes()
+        if heldAuthority { client?.releaseVirtualSticks() }
+    }
 
-        guard deadmanHeld, !axes.isNeutral else {
-            if sendingMovement { client?.stopSticks() }
-            sendingMovement = false
-            lastAxes = PilotAxes()
-            status = deadmanHeld ? "Neutral / hovering requested" : "Hold SPACE + direction"
-            return
+    @objc private func interrupted() { if mode != .off { stop() } }
+    @objc private func windowInterrupted(_ note: Notification) {
+        if let window = note.object as? NSWindow, window === captureWindow { interrupted() }
+    }
+
+    func togglePrecision() {
+        guard !holdsSpace else { return }
+        preciseMode.toggle()
+    }
+
+    @discardableResult
+    func handle(_ event: NSEvent) -> Bool {
+        guard mode != .off else { return false }
+        guard let window = captureWindow, NSApp.isActive, window.isKeyWindow,
+              window.attachedSheet == nil, NSApp.modalWindow == nil,
+              !(window.firstResponder is NSTextView) else { stop(); return false }
+        if !event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            stop()
+            return false
         }
-        guard let client,
-              client.connected, client.flightReady, client.virtualSticksEnabled else {
-            if sendingMovement { client?.stopSticks() }
-            sendingMovement = false
-            lastAxes = PilotAxes()
-            status = "INPUT PREVIEW ONLY — flight actuation locked"
-            return
+        if event.type == .flagsChanged { return false }
+        guard event.window === window else { stop(); return false }
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            if !input.pressed.isEmpty { stop() }
+            return false
         }
-        // Once tested, the existing BridgeClient timer will send the bounded
-        // axes at 10 Hz until a key is released or focus is lost.
-        if !sendingMovement || axes != lastAxes {
-            client.startSticks(pitch: axes.forward,
-                               roll: axes.strafe,
-                               yaw: axes.turn,
-                               vertical: axes.climb)
+        return keyChanged(code: event.keyCode, characters: event.charactersIgnoringModifiers ?? "",
+                          down: event.type == .keyDown, repeating: event.isARepeat)
+    }
+
+    @discardableResult
+    func keyChanged(code: UInt16, characters: String, down: Bool, repeating: Bool) -> Bool {
+        guard mode != .off else { return false }
+        if code == 53 {
+            if down { stop() }
+            return true
         }
-        sendingMovement = true
+        guard mode != .requesting else { return false }
+        if mode == .flight, client?.canPilot != true || client?.stickAuthority != .active {
+            stop()
+            return false
+        }
+        if characters.lowercased() == "x" {
+            if down && !repeating { togglePrecision() }
+            return true
+        }
+        if !down {
+            guard input.release(code: code) else { return false }
+        } else {
+            guard let key = PilotKey.resolve(code: code, characters: characters) else { return false }
+            if repeating { return true }
+            input.press(key, code: code)
+        }
+        let axes = input.axes(precision: preciseMode)
+        if axes != lastAxes, mode == .flight {
+            if axes == PilotAxes() { client?.stopSticks() } else { client?.startSticks(axes) }
+        }
         lastAxes = axes
-        status = "Virtual Stick input active — SPACE held"
+        return true
     }
 }

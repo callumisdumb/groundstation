@@ -4,6 +4,10 @@ struct BridgeConnectionView: View {
     @ObservedObject var client: BridgeClient
     @Binding var host: String
     @State private var flightSetup = false
+    @State private var flightKeyDraft = ""
+    private var canEditFlightKey: Bool {
+        !client.connecting && (!client.connected || (!client.flightKeyVerified && client.stickAuthority == .idle))
+    }
     private var busy: Bool { client.connecting || client.connected }
 
     var body: some View {
@@ -27,12 +31,12 @@ struct BridgeConnectionView: View {
             Divider()
             DisclosureGroup("Flight-control pairing", isExpanded: $flightSetup) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Optional. The separate flight key unlocks the preflight checks.")
+                    Text(client.flightKeyVerified ? "Flight key verified on this connection." : "Paste the flight key from the iPhone to unlock preflight checks.")
                         .font(.caption).foregroundStyle(.secondary)
-                    SecureField("Flight key", text: $client.flightKeyInput)
-                        .disabled(busy)
-                    Button("Save flight key") { client.saveFlightKey() }
-                        .disabled(busy || !FlightSecurity.validKey(client.flightKeyInput))
+                    SecureField("Flight key", text: $flightKeyDraft)
+                        .disabled(!canEditFlightKey)
+                    Button(client.connected ? "Verify flight key" : "Save flight key") { client.saveFlightKey(flightKeyDraft) }
+                        .disabled(!canEditFlightKey || !FlightSecurity.validKey(flightKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)))
                 }.padding(.top, 5)
             }
             Divider()
@@ -54,6 +58,10 @@ struct BridgeConnectionView: View {
                               !BridgeTransport.validCode(client.pairingCode) || client.bridgeKey == nil)
                 }
             }
+        }
+        .onAppear {
+            flightKeyDraft = client.flightKeyInput
+            flightSetup = client.connected && !client.flightKeyVerified
         }
         .textFieldStyle(.roundedBorder)
         .font(.system(size: 12))
