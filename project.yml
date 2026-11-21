@@ -8,6 +8,8 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     GENERATE_INFOPLIST_FILE: YES
+    # GroundStation has no Siri or Shortcuts intents to extract.
+    LM_SKIP_METADATA_EXTRACTION: YES
 targets:
   MacGroundStation:
     type: application
@@ -42,6 +44,7 @@ targets:
   BridgeTests:
     type: bundle.unit-test
     platform: macOS
+    deploymentTarget: "14.0"
     sources:
       - Tests/Bridge
       - Shared/Protocol
@@ -54,6 +57,7 @@ targets:
   WorkspaceTests:
     type: bundle.ui-testing
     platform: macOS
+    deploymentTarget: "14.0"
     sources:
       - Tests/MacUI
     dependencies:
