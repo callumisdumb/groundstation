@@ -12,8 +12,22 @@ Choose the plus button to make a local draft, or open an existing route. Enter c
 
 ## Virtual Cockpit
 
-Use **Virtual Cockpit** from Team or the rail. The primary camera is on the right, with its contextual tool column and instrument display. The left column has the auxiliary source state and map. The original bridge supplies a single video stream. The empty auxiliary pane labels that state. **Map focus** gives the map more space. The back arrow returns to Team.
+Press **⌘3** from any workspace to open the cockpit. The Pilot station sits above the map, with the camera and instruments on the right. Its main button follows the current aircraft state, from pairing to takeoff and keyboard handoff. Open **Flight setup** to see individual preflight readings or select **DJI simulator**. A draft opened with **View in cockpit** appears on the map as a planning overlay.
 
-The keyboard button displays the existing key panel. Opening a connection form, leaving the cockpit, disconnecting or losing app focus releases the held inputs. The camera view identifies a stalled feed and the project status identifies stale or simulated telemetry. The hardware-specific authorization and physical validation requirements are described in the [live-flight guide](LiveFlight.md).
+Press **?** for the key guide. Choose **Practice keys** to check your keyboard locally, even without a bridge. For the connected aircraft or DJI simulator, select **Fly with keyboard** after takeoff and wait for the iPhone to grant control. Press fresh keys after each grant.
 
-[Reference screenshots and comparison](WorkspaceReview.md) · [Video diagnostics](LiveVideo.md)
+| Input | Effect in captured flight or practice |
+| --- | --- |
+| Hold Space + W / S or ↑ / ↓ | Forward / backward relative to the nose |
+| Hold Space + A / D or ← / → | Left / right relative to the nose |
+| Hold Space + Q / E | Turn left / right |
+| Hold Space + C / Z | Ascend / descend |
+| Release Space | Send neutral input and clear held directions |
+| X with Space released | Switch between precision and normal speed |
+| Esc | End practice or request physical-controller handoff |
+
+DJI’s FlightHub 2 guide informed the letter mappings and **?** guide. GroundStation uses Space as hold-to-move and offers arrow keys for translation. Precision selects 0.35 m/s horizontal speed. Normal selects 0.8 m/s. Diagonal input respects the same horizontal limit. In DJI SDK v4 body velocity mode, right maps to the SDK pitch field and forward maps to roll. [FlightHub 2 shortcuts](https://fh.dji.com/user-manual/en/real-time-project-information/virtual-cockpit.html) · [DJI velocity coordinate table](https://developer.dji.com/mobile-sdk/documentation/introduction/component-guide-flightController.html)
+
+Opening a dialog, editing text, switching workspaces, or losing the key window ends capture. The phone neutralizes movement when input goes stale. **Release to controller** requests a handoff and waits for the SDK response. The phone operator can disconnect the Mac from **Pilot station**. Check physical control on the original hardware before relying on handoff. [Apple key-window notification](https://developer.apple.com/documentation/appkit/nswindow/didresignkeynotification) · [Live-flight verification](LiveFlight.md)
+
+**⌘1** opens Team, **⌘2** the Route Library, and **⌘4** Activity. Use the **Flight control** activity filter to inspect flight-key and aircraft-command results.

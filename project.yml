@@ -49,6 +49,8 @@ targets:
       - MacGroundStation/MissionLibrary.swift
       - MacGroundStation/PilotInput.swift
       - MacGroundStation/KeyboardPilotController.swift
+      - MacGroundStation/BridgeClient.swift
+      - MacGroundStation/GroundStationTheme.swift
   WorkspaceTests:
     type: bundle.ui-testing
     platform: macOS

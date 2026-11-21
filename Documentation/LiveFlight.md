@@ -37,23 +37,12 @@ removed.** Removing propellers is only for simulator and non-flight tests.
 1. Update both Mac and iPhone bridge from
    \`feature/dji-v4-readonly\`; open the Xcode **workspace**.
 2. With the aircraft grounded and motors off, connect the RC and aircraft.
-3. Pair GroundStation using the phone IP, six-digit code and 256-bit flight
-   key; the Mac must show **ENCRYPTED COMMANDS READY**.
-4. Ensure DJI Simulator shows **OFF**. The aircraft model, altitude, GPS,
-   home point, satellite count, battery and IMU status must be real and fresh.
-5. In Virtual Cockpit → Flight Controls → **REAL AIRCRAFT CONTROL**,
-   complete all four acknowledgments and type \`ENABLE LIVE FLIGHT\`.
-   This is deliberate, separate from routine connection.
-6. Click **Authorize real aircraft (15m)**, confirm the dialogue, and
-   verify **LIVE AUTHORIZED** from the iPhone.
-7. When safe, click **Arm (30s)**, then **Take off** within 30 seconds.
-   The Mac will separately ask for confirmation before sending the real DJI
-   takeoff command.
-8. Once aircraft flight status is genuinely airborne, click **Enable DJI
-   Virtual Sticks** and activate keyboard capture.
-   Hold **SPACE** with WASD (translation), Q/E (yaw) or C/Z (climb),
-   X for a slower precision setting. Releasing SPACE requests neutral
-   movement. ESC releases Virtual Sticks to the physical RC.
+3. Pair with the bridge key and current session code. Use **Flight-control pairing** on the connected Mac to verify the separate flight key.
+4. Open the cockpit with **⌘3**, then choose **Flight setup → Live flight**. Inspect the aircraft readings and resolve any incomplete item.
+5. With the aircraft grounded, complete the four pilot acknowledgments and type `ENABLE LIVE FLIGHT`.
+6. Choose **Authorize real aircraft (15m)**, confirm and wait for the iPhone’s approval.
+7. Choose **Arm for takeoff** and confirm **Take off…** within the 30-second window.
+8. Once airborne, choose **Fly with keyboard** and wait for the iPhone’s grant. Press **?** for directions. Hold Space with a direction to move, release Space to request neutral, or press Esc to request controller handoff. The guide also offers local key practice. [Keyboard map](VirtualCockpit.md#virtual-cockpit)
 9. For landing, click **Land** and confirm, or initiate RTH only after
    confirming the real home location and flight path.
 10. After landing, use **Revoke live controls** and disconnect.
@@ -81,8 +70,7 @@ removed.** Removing propellers is only for simulator and non-flight tests.
 
 ## Known limitations: must verify before operational flight
 
-- The active **DJI pods and original Mavic Pro hardware** have not been
-  compiled or flight-tested by automated CI. CI builds the non-SDK scaffold.
+- CI compiles the unsigned device bridge with the real DJI iOS SDK and builds the simulator scaffold. Physical aircraft response, SDK simulator behaviour on the controller and motor behaviour require hardware validation.
 - No guarantee of physical-RC takeover on Wi-Fi failure or iPhone crash
   until proven in model-specific supervised tests.
 - Both app targets must use the same paired TLS protocol. Each protected flight command also requires the separate AES-GCM flight key. The static PSK transport is intended for a local network. [Transport review](WorkspaceReview.md#trust-boundary)

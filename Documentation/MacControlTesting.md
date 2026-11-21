@@ -16,7 +16,7 @@ The Mac talks to the iPhone over a trusted LAN.
 - DJIWidget iOS preview and a separate H.264 relay to the Mac (experimental)
 - Unique system log IDs (fixes SwiftUI ForEach duplicate-ID warnings)
 - Clear error reporting and reconnect workflow after iPhone TCP reset
-- Mac-side flight UI scaffolding with hold-to-move directions and safety confirmations
+- Cockpit pilot station with hold-to-move directions, key practice and confirmed handoff
 - Authenticated telemetry and video sessions using the bridge key and a current six-digit code
 
 ### Experimental LIVE mode — explicit authorization required
@@ -94,33 +94,14 @@ external power if running for an extended time.
 
 ## DJI Simulator and encrypted Mac keyboard testing
 
-This development branch has a new *separate* flight key shared once from
-the iPhone bridge to the Mac. The iPhone generates a random 256-bit secret
-and stores it in Keychain. In the iPhone bridge, use **Copy flight key**,
-then paste the value into the Mac **Connect → Encrypted flight control**
-section and click **Save & verify**.
+The phone stores a separate 256-bit flight credential in Keychain. Use **Copy flight key for Mac** and enter it in **Flight-control pairing** on the Mac. On a paired connection choose **Verify flight key**.
 
-Camera, telemetry and H.264 video networking are unchanged. The flight
-command link uses AES-GCM packets and an authenticated 256-bit secret over
-the local network. Do not port-forward this prototype or assume the overall
-system is suitable for live aviation operations.
-
-**Simulator test procedure:**
-
-1. Remove the Mavic Pro's propellers; link controller + aircraft.
-2. Install and run the updated iPhone bridge and keep it open (screen stays awake).
-3. Start the Mac GroundStation app, connect to iPhone IP on port 8765 and
-   enter the current code and bridge key.
-4. In the Mac connection popover, paste the iPhone's flight key, save and verify it.
-5. Open **Virtual Cockpit → Control** from the video tool rail or
-   **Simulator / Controls** from the bottom deck.
-6. Click **Start Simulator** and confirm; wait for DJI simulator state.
-7. Click **Arm (30s)** and **Take off** within the confirmation window.
-8. Click **Enable DJI Virtual Sticks**, then enable **Capture WASD + Space**.
-9. Hold SPACE with W/A/S/D, Q/E and C/Z to move the **DJI simulator**.
-   X toggles precision mode. Releasing SPACE stops moving; ESC releases
-   Virtual Stick authority back to the physical RC.
-10. Land in the simulator, then stop the DJI simulator.
+1. Remove the Mavic Pro’s propellers and link the physical remote and aircraft.
+2. Run the iPhone bridge in the foreground and connect the Mac using the phone address, code and bridge key.
+3. Open **⌘3 → Flight setup → DJI simulator**. Choose **Start DJI simulator…**, confirm and wait for the displayed mode to change.
+4. Arm and confirm simulated takeoff. Once airborne, choose **Fly with keyboard** and wait for the iPhone’s grant.
+5. Check every direction against the displayed simulator position and heading. Test releasing Space, holding opposing directions, changing windows, pressing Esc and interrupting the connection. Confirm handoff on the physical controller. [Keyboard map](VirtualCockpit.md#virtual-cockpit)
+6. Land in the simulator, then choose **Stop DJI simulator…**.
 
 DJI documents Virtual Stick control-data frequency 5–25 Hz. The Mac emits
 bounded control data at 10 Hz while enabled, including neutral commands

@@ -18,6 +18,7 @@ struct FlightCockpitView: View {
     let openConnection: () -> Void
     @State private var showKeyboard = false
     @State private var simulatorSetup = false
+    @State private var showPreflightReadings = false
 
     @State private var activeTool: CockpitTool = .aircraft
     @State private var showToolPanel = false
@@ -469,7 +470,7 @@ struct FlightCockpitView: View {
 
     private var flightInspector: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(client.djiSimulatorActive ? "DJI SIMULATOR" : "REAL AIRCRAFT CONTROL",
+            Label(client.djiSimulatorActive ? "DJI SIMULATOR" : (aircraftLinked ? "LIVE AIRCRAFT" : "FLIGHT SETUP"),
                   systemImage: client.djiSimulatorActive ? "gamecontroller" : "airplane")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(client.djiSimulatorActive ? green : amber)
@@ -492,7 +493,7 @@ struct FlightCockpitView: View {
                 Picker("Flight environment", selection: $simulatorSetup) {
                     Text("Live flight").tag(false)
                     Text("DJI simulator").tag(true)
-                }.pickerStyle(.segmented)
+                }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("Flight environment")
                 if simulatorSetup {
                     Text("The DJI simulator runs on the linked aircraft. Remove its propellers for ground testing.")
                         .font(.caption).foregroundStyle(GSPalette.muted)
@@ -579,14 +580,39 @@ struct FlightCockpitView: View {
                 }
                 .controlSize(.small)
             } else {
-                Toggle("Clear outdoor launch / landing area", isOn: $liveClearArea)
-                Toggle("Pilot holding linked DJI remote controller", isOn: $livePilotAtRC)
-                Toggle("Visual line of sight and clear of bystanders", isOn: $liveVLOSAndRegulations)
-                Toggle("RTH height, home point and failsafe checked", isOn: $liveFailsafeReviewed)
-                Text("Type ENABLE LIVE FLIGHT")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                TextField("ENABLE LIVE FLIGHT", text: $liveConfirmPhrase)
-                    .textFieldStyle(.roundedBorder)
+                let checks = client.livePreflightChecks
+                let ready = checks.allSatisfy(\.passed)
+                DisclosureGroup(isExpanded: $showPreflightReadings) {
+                    ForEach(checks) { check in
+                        HStack(spacing: 6) {
+                            Image(systemName: check.passed ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(check.passed ? green : amber)
+                            Text(check.label)
+                            Spacer()
+                            Text(check.value).foregroundStyle(GSPalette.muted)
+                        }.font(.system(size: 11))
+                    }
+                } label: {
+                    Text("Aircraft readiness · \(checks.filter(\.passed).count)/\(checks.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                if !ready, let first = checks.first(where: { !$0.passed }) {
+                    Label(first.label + " · " + first.value, systemImage: "exclamationmark.circle")
+                        .font(.caption).foregroundStyle(amber)
+                    if !client.flightKeyVerified {
+                        Button(client.connected ? "Pair flight key" : "Pair iPhone bridge", action: openConnection)
+                    }
+                }
+                if ready {
+                    Toggle("Clear outdoor launch / landing area", isOn: $liveClearArea)
+                    Toggle("Pilot holding linked DJI remote controller", isOn: $livePilotAtRC)
+                    Toggle("Visual line of sight and clear of bystanders", isOn: $liveVLOSAndRegulations)
+                    Toggle("RTH height, home point and failsafe checked", isOn: $liveFailsafeReviewed)
+                    Text("Type ENABLE LIVE FLIGHT")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    TextField("ENABLE LIVE FLIGHT", text: $liveConfirmPhrase)
+                        .textFieldStyle(.roundedBorder)
+                }
                 Button {
                     confirm(.authorizeLiveFlight)
                 } label: {
@@ -595,17 +621,6 @@ struct FlightCockpitView: View {
                 }
                 .disabled(!liveChecklistReady)
                 .controlSize(.small)
-            }
-            if !client.livePreflightReady && !client.liveFlightAuthorized {
-                ForEach(client.livePreflightChecks) { check in
-                    HStack(spacing: 6) {
-                        Image(systemName: check.passed ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(check.passed ? green : amber)
-                        Text(check.label)
-                        Spacer()
-                        Text(check.value).foregroundStyle(GSPalette.muted)
-                    }.font(.system(size: 11))
-                }
             }
         }
     }

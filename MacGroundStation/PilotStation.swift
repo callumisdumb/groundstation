@@ -128,6 +128,9 @@ struct PilotStation: View {
                         else { keyboard.beginPractice(in: NSApp.keyWindow) }
                     }
                     .controlSize(.small).disabled(client.stickAuthority != .idle)
+                } else {
+                    Button(keyboard.mode == .requesting ? "Cancel request" : "Release control") { keyboard.stop() }
+                        .controlSize(.small)
                 }
             }
             keyRow([.forward, .backward], "↑ ↓", "Forward / back")

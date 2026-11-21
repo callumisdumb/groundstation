@@ -6,8 +6,8 @@ GroundStation is a native macOS console and iPhone communications bridge for the
 | --- | --- |
 | Team | View bridge and aircraft status, change your call sign, search the map, switch layers and recenter on a device or saved route. |
 | Flight Route Library | Create and edit local waypoint drafts, reopen earlier routes and export GeoJSON. |
-| Virtual Cockpit | View the camera, map and flight instruments. The existing experimental hardware controls require separate pairing and authorization. |
-| Activity | Search the current session’s connection and command events. |
+| Virtual Cockpit | Open the Pilot station with ⌘3, see the next flight step and press ? for keyboard practice or the live control map. |
+| Activity | Search session events and filter flight-control replies. |
 
 The no-SDK build supplies simulated bridge data. The hardware integration targets DJI Mobile SDK v4.16.2. Live operation, video latency and controller takeover still require validation on the original Mavic Pro and iPhone. [Design, security and usability review](Documentation/WorkspaceReview.md) · [Hardware validation](Documentation/TestingPlan.md)
 
@@ -28,11 +28,15 @@ Build the `MacGroundStation` scheme on the Mac. For an iPhone, choose `iOSFlight
 1. Open the bridge on the iPhone and keep it in the foreground. Allow local network access. The Mac and phone must be able to reach each other on the local network.
 2. In the Mac project, choose **Connect bridge**. Enter the address and current six-digit session code from the phone.
 3. On the phone choose **Copy bridge key for Mac**. Paste it into **Bridge key** on the Mac, then choose **Connect**. The Mac saves the key in Keychain. An existing paired flight key can also supply the bridge credential when the bridge-key field is empty.
-4. To pair flight control separately, disconnect, open **Flight-control pairing**, enter the phone’s flight key, choose **Save flight key** and reconnect. The Mac verifies the key on the paired connection.
+4. For pilot access, open **Flight-control pairing** on the paired Mac, paste the phone’s flight key and choose **Verify flight key**.
 
 The phone renews the short code when the listeners restart. Copy for Mac uses the system clipboard for 60 seconds and supports Universal Clipboard. On a Mac without Handoff, transfer the key through a trusted channel. **Reset paired keys** on the phone disconnects the current Mac and revokes the old keys. Update both apps together when upgrading from the earlier plaintext protocol.
 
 Telemetry and command traffic use TCP port 8765 and H.264 uses TCP port 8766. Each port has its own authenticated TLS session. Pairing a bridge leaves live flight locked. [Transport review](Documentation/WorkspaceReview.md#trust-boundary) · [Live video](Documentation/LiveVideo.md)
+
+## Keyboard flight
+
+Open **⌘3 → Flight setup** and select the live aircraft or DJI simulator. The Pilot station shows the next available action. After confirmed takeoff, choose **Fly with keyboard** and wait for the iPhone grant. Hold **Space** plus **WASD** or the **arrows** to translate, **Q/E** to turn and **C/Z** to ascend or descend. Release Space for neutral or press **Esc** to hand control back. Open **? → Practice keys** to try the controls entirely on the Mac. [Controls and flight readiness](Documentation/VirtualCockpit.md#virtual-cockpit)
 
 ## Hardware and operating guides
 
@@ -51,4 +55,4 @@ xcodebuild test -project MavicGroundStation.xcodeproj -scheme GroundStationRevie
   -destination 'platform=macOS' -parallel-testing-enabled NO
 ```
 
-The review scheme uses a temporary route library for UI tests. GitHub Actions builds the Mac and iPhone simulator targets, exercises bridge and workspace regressions, collects native screenshots and verifies optional model packaging.
+The review scheme uses a temporary route library for UI tests. GitHub Actions builds the Mac and iPhone simulator targets, compiles the complete DJI-enabled iPhone bridge, tests the keyboard and workspace flows, collects native screenshots and verifies optional model packaging.
