@@ -64,7 +64,7 @@ jobs:
           find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
 
   djiwidget:
-    name: Build DJIWidget for iPhone
+    name: Build DJIWidget and the iPhone flight bridge
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,3 +82,8 @@ jobs:
           if grep -Ei '(^|[[:space:]])warning:' "$RUNNER_TEMP/djiwidget-build.log"; then
             exit 1
           fi
+      - name: Build the bridge with the DJI SDK for a physical iPhone
+        run: |
+          xcodebuild -workspace MavicGroundStation.xcworkspace -scheme iOSFlightBridge \
+            -configuration Debug -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO build
