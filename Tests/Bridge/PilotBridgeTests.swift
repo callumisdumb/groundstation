@@ -9,12 +9,16 @@ final class PilotBridgeTests: XCTestCase {
             let peer = PilotTestPeer(simulator: simulator)
             let client = BridgeClient()
             defer { client.disconnect(); peer.listener.stop() }
+            let listening = expectation(description: "Test peer is listening on its assigned port")
+            peer.listener.onListening = { listening.fulfill() }
             try peer.start()
-            try await waitUntil { peer.listener.port != nil }
+            await fulfillment(of: [listening], timeout: 8)
+            let port = try XCTUnwrap(peer.listener.port?.rawValue)
+            XCTAssertNotEqual(port, 0)
             client.bridgeKeyInput = ""
             client.flightKeyInput = peer.key
             client.pairingCode = peer.code
-            client.connect(host: "127.0.0.1", port: try XCTUnwrap(peer.listener.port?.rawValue))
+            client.connect(host: "127.0.0.1", port: port)
             try await waitUntil { client.flightKeyVerified && client.latestStatus != nil }
             if !simulator {
                 XCTAssertFalse(client.canPilot)

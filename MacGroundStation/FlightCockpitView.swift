@@ -12,6 +12,8 @@ struct FlightCockpitView: View {
     @ObservedObject var missions: MissionLibrary
     @Binding var satellite: Bool
     @Binding var followAircraft: Bool
+    @Binding var routePreview: MapRequest?
+    private var followingAircraft: Bool { followAircraft && routePreview == nil }
     let track: [CLLocationCoordinate2D]
     let status: ProjectStatus
     let now: Date
@@ -162,7 +164,7 @@ struct FlightCockpitView: View {
 
             GroundStationMap(aircraft: aircraftCoordinate, home: homeCoordinate,
                              route: missions.selectedRoute?.waypoints ?? [], flightTrack: track,
-                             satellite: satellite, followAircraft: followAircraft)
+                             satellite: satellite, followAircraft: followingAircraft, request: routePreview)
                 .overlay(alignment: .topTrailing) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -177,9 +179,10 @@ struct FlightCockpitView: View {
                         Spacer()
                         VStack(spacing: 4) {
                             mapControl("square.3.layers.3d", help: "Toggle satellite map") { satellite.toggle() }
-                            mapControl(followAircraft ? "location.fill" : "location",
-                                       help: followAircraft ? "Stop following aircraft" : "Follow aircraft") {
-                                followAircraft.toggle()
+                            mapControl(followingAircraft ? "location.fill" : "location",
+                                       help: followingAircraft ? "Stop following aircraft" : "Follow aircraft") {
+                                followAircraft = !followingAircraft
+                                routePreview = nil
                             }
                         }
                     }

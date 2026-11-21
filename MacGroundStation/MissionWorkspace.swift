@@ -56,6 +56,7 @@ struct MissionWorkspace: View {
                             Button(action: openCockpit) { Label("View in cockpit", systemImage: "viewfinder") }
                                 .buttonStyle(.plain).foregroundStyle(GSPalette.cyan)
                                 .help("Show this draft on the cockpit map")
+                                .disabled(current.waypoints.isEmpty)
                             Toggle("Satellite", isOn: $satellite).toggleStyle(.checkbox)
                         }.padding(.trailing, 12).frame(height: 40).background(GSPalette.side)
                         HStack(spacing: 0) {

@@ -10,7 +10,7 @@ import Network
 final class BridgeServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var macConnected = false
-    @Published private(set) var pilotStatus = "Physical controller"
+    @Published private(set) var pilotStatus = "Awaiting aircraft state"
     @Published private(set) var localAddress: String?
     @Published private(set) var lastEvent = "Waiting"
     @Published private(set) var djiStatus = "DJI SDK not linked (simulator mode)"
@@ -46,7 +46,7 @@ final class BridgeServer: ObservableObject {
             djiAdapter.onUpdate = { [weak self] payload in
                 Task { @MainActor in
                     self?.latestDJIStatus = payload
-                    self?.pilotStatus = payload.flightControlStatus ?? "Physical controller"
+                    self?.pilotStatus = payload.flightControlStatus ?? "Awaiting aircraft state"
                     self?.djiStatus = payload.connectionState ?? "DJI status unavailable"
                 }
             }
@@ -75,6 +75,7 @@ final class BridgeServer: ObservableObject {
         listener.onReady = { [weak self] conn in
             guard let self else { return }
             self.macConnected = true
+            self.pilotStatus = "Awaiting aircraft state"
             self.lastEvent = "Paired Mac connected"
             self.sendHello()
             self.startStatusStream()

@@ -39,6 +39,7 @@ struct ContentView: View {
     @State private var track: [CLLocationCoordinate2D] = []
     @State private var trackSource: String?
     @State private var showConnection = false
+    @State private var cockpitRoutePreview: MapRequest?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -63,7 +64,10 @@ struct ContentView: View {
             liveVideo.disconnect()
             client.disconnect()
         }
-        .onChange(of: workspace) { _ in keyboard.stop() }
+        .onChange(of: workspace) { destination in
+            keyboard.stop()
+            if destination != .cockpit { cockpitRoutePreview = nil }
+        }
         .onChange(of: showConnection) { shown in
             if shown { keyboard.stop() }
         }
@@ -91,10 +95,14 @@ struct ContentView: View {
                              openCockpit: { workspace = .cockpit }, openRoutes: { workspace = .missions })
         case .missions:
             MissionWorkspace(missions: missions, client: client, satellite: $satellite, track: track, status: status,
-                             closeLibrary: { workspace = .project }, openCockpit: { workspace = .cockpit })
+                             closeLibrary: { workspace = .project }, openCockpit: {
+                                 guard let points = missions.selectedRoute?.waypoints, !points.isEmpty else { return }
+                                 cockpitRoutePreview = MapRequest(action: .fit(points.map(\.coordinate)))
+                                 workspace = .cockpit
+                             })
         case .cockpit:
             FlightCockpitView(client: client, video: liveVideo, keyboard: keyboard, missions: missions,
-                              satellite: $satellite, followAircraft: $followAircraft, track: track,
+                              satellite: $satellite, followAircraft: $followAircraft, routePreview: $cockpitRoutePreview, track: track,
                               status: status, now: now, openConnection: { showConnection = true })
         case .activity:
             ActivityWorkspace(client: client)
