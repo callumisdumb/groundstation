@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 /// Flight commands are integrity-protected and confidential independently
-/// of the video/telemetry TCP transport. A six-digit pairing code alone does
+/// of the authenticated TLS transport. A six-digit pairing code alone does
 /// NOT authenticate a flight-control channel.
 ///
 /// A randomly generated 256-bit key is copied once from iPhone to Mac and
@@ -54,9 +54,8 @@ enum FlightSecurity {
 
 enum FlightKeyStore {
     private static let service = "org.groundstation.paired-flight-key.v1"
-    private static let account = "shared-key"
 
-    static func load() -> String? {
+    static func load(account: String = "shared-key") -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -64,16 +63,20 @@ enum FlightKeyStore {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
+        return read(query).key
+    }
+
+    private static func read(_ query: [String: Any]) -> (status: OSStatus, key: String?) {
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8),
-              FlightSecurity.validKey(value) else { return nil }
-        return value
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data,
+              let value = String(data: data, encoding: .utf8), FlightSecurity.validKey(value)
+        else { return (status, nil) }
+        return (status, value)
     }
 
     @discardableResult
-    static func save(_ key: String) -> Bool {
+    static func save(_ key: String, account: String = "shared-key") -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard FlightSecurity.validKey(trimmed) else { return false }
         let identity: [String: Any] = [
@@ -94,9 +97,22 @@ enum FlightKeyStore {
 
     /// Only the iPhone bridge generates this key. Macs must explicitly pair.
     static func loadOrCreate() -> String {
-        if let existing = load() { return existing }
-        let newKey = FlightSecurity.generateKey()
-        return save(newKey) ? newKey : ""
+        let identity: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service, kSecAttrAccount as String: "shared-key"
+        ]
+        var query = identity
+        query[kSecReturnData as String] = true
+        let result = read(query)
+        if let key = result.key { return key }
+        guard result.status == errSecItemNotFound else { return "" }
+        let key = FlightSecurity.generateKey()
+        var insertion = identity
+        insertion[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        insertion[kSecValueData as String] = Data(key.utf8)
+        let status = SecItemAdd(insertion as CFDictionary, nil)
+        if status == errSecDuplicateItem { return load() ?? "" }
+        return status == errSecSuccess ? key : ""
     }
 }
 

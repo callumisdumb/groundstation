@@ -38,3 +38,39 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: iOSFlightBridge/Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: iOSFlightBridge/DJIWidget-Bridging-Header.h
+
+  BridgeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/Bridge
+      - Shared/Protocol
+      - iOSFlightBridge/BridgeListener.swift
+      - MacGroundStation/MissionLibrary.swift
+  WorkspaceTests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - Tests/MacUI
+    dependencies:
+      - target: MacGroundStation
+    settings:
+      base:
+        TEST_TARGET_NAME: MacGroundStation
+schemes:
+  MacGroundStation:
+    build:
+      targets:
+        MacGroundStation: all
+  iOSFlightBridge:
+    build:
+      targets:
+        iOSFlightBridge: all
+  GroundStationReview:
+    build:
+      targets:
+        MacGroundStation: all
+    test:
+      targets:
+        - BridgeTests
+        - WorkspaceTests

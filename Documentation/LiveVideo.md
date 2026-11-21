@@ -8,11 +8,10 @@ H.264 byte stream** from DJI's iOS Mobile SDK v4 directly to the Mac.
 
 | Link | Direction | Port | Payload |
 | --- | --- | --- | --- |
-| Telemetry and commands | bidirectional | 8765/TCP | newline-delimited JSON |
-| Camera video | iPhone → Mac | 8766/TCP | 4-byte big-endian length, then arbitrary H.264 byte chunk |
+| Telemetry and commands | bidirectional | 8765/TLS over TCP | newline-delimited JSON |
+| Camera video | iPhone → Mac | 8766/TLS over TCP | 4-byte big-endian length, then arbitrary H.264 byte chunk |
 
-The iPhone video endpoint expects the first line to be:
-\`GSVIDEO1 <six-digit-pairing-code>\n\`
+The video endpoint authenticates the bridge key and session code during its TLS handshake. Both apps must run the paired-transport revision. [Pair the bridge](../README.md#pair-the-bridge)
 
 After authentication, each received compressed chunk gets a 4-byte network-order
 length prefix. A chunk is **not necessarily a complete frame or a NAL unit**.
@@ -30,7 +29,6 @@ Stay on the currently checked-out branch, \`feature/dji-v4-readonly\`:
 
 \`\`\`bash
 cd /path/to/groundstation
-git pull --ff-only origin feature/dji-v4-readonly
 xcodegen generate
 pod install
 open MavicGroundStation.xcworkspace
@@ -43,7 +41,7 @@ Then build and run **MacGroundStation** on the Mac.
 2. Power on the controller and drone; verify they are actually linked.
 3. Connect the iPhone to the controller with the compatible USB-C cable.
 4. Keep the Flight Bridge app active on the iPhone and both devices on the same trusted Wi-Fi.
-5. In the Mac app, enter the iPhone's Wi-Fi IP and six-digit pairing code, and click **Connect**.
+5. In the Mac app, enter the iPhone’s address, bridge key and current six-digit code, and click **Connect**.
 6. The Mac establishes **two** separate sockets (8765 and 8766).
 7. The camera panel should change to **LIVE H.264**, with an FPS counter after decoded frames arrive.
 
@@ -80,13 +78,11 @@ Then build and run **MacGroundStation** on the Mac.
 
 ## Limitations and security
 
-- The video port is a plaintext **trusted-LAN development transport** protected
-  only by the six-digit pairing code. It is not a secure remote-camera service;
-  never forward ports 8765 or 8766 onto the public Internet.
+- The video port requires paired TLS. Keep the bridge on the local network. [Transport and remaining risks](WorkspaceReview.md#trust-boundary)
 - Continuous video does not by itself guarantee a safe control-to-photon
   latency or enough frame reliability for remote piloting.
 - Flight and motor commands remain **locked by default**, independent of video.
-- No audio, video recording to disk, retransmit logic, encryption, or
+- No audio, video recording to disk, application-level retransmit logic, or
   latency instrumentation is provided yet.
 - Keep the RC available, maintain visual line of sight and follow applicable CAA rules.
 

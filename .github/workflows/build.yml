@@ -6,6 +6,9 @@ on:
   pull_request:
     branches:
       - main
+      - feature/dji-v4-readonly
+permissions:
+  contents: read
 jobs:
   build:
     name: Compile scaffold (no DJI pods)
@@ -23,6 +26,31 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO build
+      - name: Build iPhone bridge in simulator-only mode
+        run: |
+          xcodebuild -project MavicGroundStation.xcodeproj \
+            -scheme iOSFlightBridge \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Run bridge regressions and exercise the Mac workspaces
+        id: review
+        run: |
+          xcodebuild test -project MavicGroundStation.xcodeproj -scheme GroundStationReview \
+            -destination 'platform=macOS' -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/groundstation-review.xcresult" \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES
+      - name: Collect native application screenshots
+        if: always() && steps.review.outcome != 'skipped'
+        run: |
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/groundstation-review.xcresult" \
+            --output-path "$RUNNER_TEMP/groundstation-screens"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.review.outcome != 'skipped'
+        with:
+          name: groundstation-workspace-screens
+          path: ${{ runner.temp }}/groundstation-screens
+          if-no-files-found: warn
       - name: Verify optional Apple Core ML object detection model bundles
         run: |
           bash scripts/install_vehicle_detector.sh
@@ -34,12 +62,6 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/groundstation-ai" \
             CODE_SIGNING_ALLOWED=NO build
           find "$RUNNER_TEMP/groundstation-ai/Build/Products/Debug" -name 'GroundStationDetector.mlmodelc' -print | grep -q GroundStationDetector
-      - name: Build iPhone bridge in simulator-only mode
-        run: |
-          xcodebuild -project MavicGroundStation.xcodeproj \
-            -scheme iOSFlightBridge \
-            -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build
+
 # This only verifies the build WITHOUT DJI CocoaPods. DJI SDK v4 and DJIWidget
 # still require a physical iPhone 15/Xcode hardware compatibility test.

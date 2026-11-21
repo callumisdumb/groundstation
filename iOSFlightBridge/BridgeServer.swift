@@ -5,7 +5,7 @@ import Network
 
 /// Local-only iPhone bridge. All operator controls originate on the Mac.
 /// Session code is shown on iPhone for pairing; no phone flight UI is provided.
-/// IMPORTANT: this is plain TCP. Never use on untrusted Wi-Fi or port-forward.
+/// Telemetry and video use separate, paired TLS channels.
 @MainActor
 final class BridgeServer: ObservableObject {
     @Published private(set) var running = false
@@ -17,21 +17,28 @@ final class BridgeServer: ObservableObject {
     /// Never sent over the 8765/8766 connections.
     @Published private(set) var flightAccessKey = FlightKeyStore.loadOrCreate()
 
-    private var listener: NWListener?
-    private var client: NWConnection?
+    private let listener = BridgeListener()
+    private var starting = false
+    private var client: NWConnection? { listener.active }
+    var bridgeKey: String { BridgeTransport.bridgeKey(fromFlightKey: flightAccessKey) ?? "" }
     private var timer: Timer?
     private let djiAdapter = DJIAdapter()
     private var latestDJIStatus: GroundStationMessage.Payload?
     private var startedDJI = false
     private var commandBuffer = Data()
-    private var seenCommands = Set<String>()
+    private var commandWindow = CommandWindow()
     private var badPairingAttempts = 0
     private let video = DJIFramePreview.shared
-    private lazy var videoServer = H264VideoServer(pairingCode: { [weak self] in
-        self?.pairingCode ?? ""
-    })
+    private let videoServer = H264VideoServer()
 
     func start() {
+        guard !starting, !running else { return }
+        if flightAccessKey.isEmpty { flightAccessKey = FlightKeyStore.loadOrCreate() }
+        pairingCode = String(Int.random(in: 100_000...999_999))
+        guard let parameters = BridgeTransport.parameters(key: bridgeKey, code: pairingCode, channel: .telemetry),
+              let videoParameters = BridgeTransport.parameters(key: bridgeKey, code: pairingCode, channel: .video)
+        else { lastEvent = "Unlock the iPhone to access its pairing key."; return }
+        starting = true
         if !startedDJI {
             startedDJI = true
             djiAdapter.onUpdate = { [weak self] payload in
@@ -54,83 +61,74 @@ final class BridgeServer: ObservableObject {
         video.onH264Data = { [weak self] bytes in
             Task { @MainActor in self?.videoServer.pushH264(bytes) }
         }
-        videoServer.start()
-        guard listener == nil else { return }
+        listener.onListening = { [weak self] in
+            self?.starting = false
+            self?.running = true
+            self?.localAddress = Self.wifiAddress()
+            self?.lastEvent = "Waiting for a paired Mac"
+        }
+        listener.onFailure = { [weak self] error in self?.listenerFailed(error) }
+        videoServer.onFailure = { [weak self] error in self?.listenerFailed(error) }
+        listener.onReady = { [weak self] conn in
+            guard let self else { return }
+            self.lastEvent = "Paired Mac connected"
+            self.sendHello()
+            self.startStatusStream()
+            self.receiveNext(from: conn)
+        }
+        listener.onClose = { [weak self] in
+            guard let self else { return }
+            self.timer?.invalidate()
+            self.timer = nil
+            self.djiAdapter.networkDisconnected()
+            self.commandBuffer.removeAll()
+            self.badPairingAttempts = 0
+            self.lastEvent = "Mac disconnected · controls released"
+        }
         do {
-            let newListener = try NWListener(using: .tcp, on: 8765)
-            newListener.newConnectionHandler = { [weak self] conn in
-                Task { @MainActor in self?.accept(conn) }
-            }
-            newListener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
-                    switch state {
-                    case .ready:
-                        self?.running = true
-                        self?.lastEvent = "Listening on TCP 8765"
-                        self?.localAddress = Self.wifiAddress()
-                    case .failed(let error):
-                        self?.lastEvent = "Listener failed: \(error)"
-                        self?.running = false
-                    case .cancelled:
-                        self?.running = false
-                    default: break
-                    }
-                }
-            }
-            listener = newListener
-            newListener.start(queue: .global(qos: .userInitiated))
-        } catch { lastEvent = "Could not open port: \(error)" }
+            try videoServer.start(parameters: videoParameters)
+            try listener.start(parameters: parameters, port: 8765)
+        } catch {
+            stop()
+            lastEvent = "Could not start the bridge: \(error.localizedDescription)"
+        }
+    }
+
+    func resetPairing(restart: Bool) {
+        let replacement = FlightSecurity.generateKey()
+        guard FlightKeyStore.save(replacement) else {
+            lastEvent = "Could not update Keychain. Unlock the iPhone and try again."
+            return
+        }
+        stop()
+        flightAccessKey = replacement
+        if restart { start() }
+    }
+
+    private func listenerFailed(_ error: NWError) {
+        stop()
+        lastEvent = "Bridge stopped: \(error.localizedDescription)"
     }
 
     func stop() {
+        listener.stop()
         videoServer.stop()
         video.onH264Data = nil
-        endSession()
-        listener?.cancel()
-        listener = nil
+        starting = false
         running = false
         lastEvent = "Stopped"
     }
 
-    private func accept(_ conn: NWConnection) {
-        endSession()
-        client = conn
-        conn.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                guard let self, self.client === conn else { return }
-                switch state {
-                case .ready:
-                    self.lastEvent = "Mac connected"
-                    self.sendHello()
-                    self.startStatusStream()
-                    self.receiveNext(from: conn)
-                case .failed(let error):
-                    self.lastEvent = "Mac connection failed: \(error)"
-                    self.endSession()
-                case .cancelled:
-                    self.endSession()
-                default: break
-                }
-            }
-        }
-        conn.start(queue: .global(qos: .userInitiated))
-    }
-
     private func endSession() {
-        timer?.invalidate()
-        timer = nil
-        djiAdapter.networkDisconnected()
-        client?.cancel()
-        client = nil
-        commandBuffer.removeAll()
-        badPairingAttempts = 0
-        seenCommands.removeAll()
+        if let client { listener.close(client) }
     }
 
     private func startStatusStream() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        guard let session = client else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak session] _ in
             Task { @MainActor in
+                guard let session, self?.client === session else { return }
                 self?.djiAdapter.refreshConnection()
                 self?.video.start()
                 self?.sendCurrentStatus()
@@ -171,8 +169,7 @@ final class BridgeServer: ObservableObject {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
 
-            // Flight actions require AES-256-GCM with a random, locally
-            // provisioned key. Camera and diagnostics remain plaintext on LAN.
+            // The flight key is a separate privilege inside the paired TLS session.
             if let packet = try? decoder.decode(EncryptedFlightPacket.self, from: line) {
                 guard let command = FlightSecurity.open(packet, key: flightAccessKey) else {
                     badPairingAttempts += 1
@@ -190,13 +187,6 @@ final class BridgeServer: ObservableObject {
     }
 
     private func validateAndDispatch(_ command: GroundStationCommand, encrypted: Bool) {
-        guard command.version == 1,
-              abs(Date().timeIntervalSince(command.timestamp)) <= 3,
-              command.id.count <= 80, !seenCommands.contains(command.id) else {
-            sendResult(id: command.id, accepted: false,
-                       detail: "Expired, duplicate or unsupported command")
-            return
-        }
         guard command.pairingCode == pairingCode else {
             badPairingAttempts += 1
             sendResult(id: command.id, accepted: false, detail: "Incorrect pairing code")
@@ -212,8 +202,10 @@ final class BridgeServer: ObservableObject {
             return
         }
 
-        seenCommands.insert(command.id)
-        if seenCommands.count > 250 { seenCommands.removeAll() }
+        guard commandWindow.admit(command) else {
+            sendResult(id: command.id, accepted: false, detail: "Expired, duplicate or unsupported command")
+            return
+        }
         badPairingAttempts = 0
 
         if command.action == .verifyFlightKey {
