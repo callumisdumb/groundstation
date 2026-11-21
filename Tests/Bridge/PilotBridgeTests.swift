@@ -36,7 +36,9 @@ final class PilotBridgeTests: XCTestCase {
             try await waitUntil { client.stickAuthority == .idle }
             peer.reply(to: cancelled, detail: "Late grant")
             peer.sendStatus(engaged: true)
-            try await waitUntil { client.lastControlResult == "Late grant" && client.latestStatus?.payload.virtualSticksEngaged == true }
+            try await waitUntil { client.latestStatus?.payload.virtualSticksEngaged == true }
+            XCTAssertNotEqual(client.lastControlResult, "Late grant")
+            XCTAssertNil(client.lastPilotIssue)
             XCTAssertEqual(client.stickAuthority, .idle)
             XCTAssertFalse(peer.commands.contains { $0.action == .sticks })
 

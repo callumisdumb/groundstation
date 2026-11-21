@@ -22,10 +22,10 @@ final class WorkspaceTests: XCTestCase {
         let field = app.textFields["Latitude (−90 to 90)"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.click()
-        field.typeText("54.5")
+        field.typeText("57.2749")
         let longitude = app.textFields["Longitude (−180 to 180)"]
         longitude.click()
-        longitude.typeText("-3")
+        longitude.typeText("-6.2156")
         app.buttons["Add waypoint"].click()
         XCTAssertTrue(app.staticTexts["Waypoints (1)"].waitForExistence(timeout: 5))
         let map = app.descendants(matching: .any).matching(identifier: "GroundStationMap").firstMatch
@@ -39,6 +39,9 @@ final class WorkspaceTests: XCTestCase {
         app.buttons["Edit New flight route"].firstMatch.click()
         app.buttons["View in cockpit"].click()
         XCTAssertTrue(app.buttons["pilot-next-step"].waitForExistence(timeout: 4))
+        let cockpitMapRender = expectation(for: NSPredicate(format: "value == %@", "Map ready"), evaluatedWith: map)
+        _ = XCTWaiter.wait(for: [cockpitMapRender], timeout: 8)
+        attach(window, "07-cockpit-route-preview")
         app.typeKey("2", modifierFlags: [.command])
         app.buttons["Close route library"].click()
         app.typeKey("3", modifierFlags: [.command])

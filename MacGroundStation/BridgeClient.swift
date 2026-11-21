@@ -26,6 +26,7 @@ final class BridgeClient: ObservableObject, KeyboardFlightLink {
         if !entered.isEmpty { return FlightSecurity.validKey(entered) ? entered : nil }
         return BridgeTransport.bridgeKey(fromFlightKey: flightKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
     }
+    @Published private(set) var lastPilotIssue: String?
     @Published private(set) var lastControlResult = "No flight commands sent"
     @Published private(set) var latestStatus: GroundStationMessage?
     @Published private(set) var latestFrame: NSImage?
@@ -210,6 +211,7 @@ final class BridgeClient: ObservableObject, KeyboardFlightLink {
         connected = false
         connectionStatus = reason
         lastControlResult = "No flight commands sent"
+        lastPilotIssue = nil
         stickAuthority = .idle
         stickAxes = PilotAxes()
         flightKeyVerificationID = nil
@@ -293,7 +295,17 @@ final class BridgeClient: ObservableObject, KeyboardFlightLink {
                 case .commandResult:
                     let replyAction = message.payload.commandID.flatMap { pendingActions.removeValue(forKey: $0) }
                     if let id = message.payload.commandID, let action = replyAction {
-                        if action == .verifyFlightKey, flightKeyVerificationID == id {
+                        if (action == .enableSticks && stickAuthority != .requesting(id)) ||
+                           (action == .disableSticks && stickAuthority != .releasing(id)) ||
+                           (action == .verifyFlightKey && flightKeyVerificationID != id) {
+                            addLog("Ignored a reply to a superseded control request", flightEvent: true)
+                            continue
+                        }
+                        if action.requiresEncryptedFlightLink {
+                            lastPilotIssue = message.payload.commandAccepted == true ? nil :
+                                (message.payload.message ?? "The iPhone declined this command.")
+                        }
+                        if action == .verifyFlightKey {
                             flightKeyVerificationID = nil
                             flightKeyVerified = message.payload.commandAccepted == true
                         }
@@ -303,7 +315,7 @@ final class BridgeClient: ObservableObject, KeyboardFlightLink {
                         if action == .revokeLiveFlight || action == .stopDJISimulator {
                             liveFlightAcknowledged = false
                         }
-                        if action == .enableSticks, stickAuthority == .requesting(id) {
+                        if action == .enableSticks {
                             if message.payload.commandAccepted != true {
                                 stickAuthority = .idle
                             } else if canPilot {
@@ -313,7 +325,7 @@ final class BridgeClient: ObservableObject, KeyboardFlightLink {
                                 releaseVirtualSticks()
                             }
                         }
-                        if action == .disableSticks, stickAuthority == .releasing(id) {
+                        if action == .disableSticks {
                             guard message.payload.commandAccepted == true else {
                                 close(conn, reason: "Controller handoff unconfirmed. Check the physical remote.")
                                 return

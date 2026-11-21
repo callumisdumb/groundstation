@@ -90,6 +90,11 @@ struct PilotStation: View {
                     } else {
                         Text(detail).font(.system(size: 12)).foregroundStyle(GSPalette.muted)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let issue = client.lastPilotIssue {
+                            Label(issue, systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(GSPalette.amber)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         Button(action: performStep) {
                             Label(actionTitle, systemImage: step == .release ? "hand.raised.fill" : "gamecontroller")
                                 .frame(maxWidth: .infinity)
